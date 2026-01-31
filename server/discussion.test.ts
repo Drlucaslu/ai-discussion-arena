@@ -2,37 +2,46 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
-// Mock database functions
+// Mock database functions - 单机版本
 vi.mock("./db", () => ({
   createDiscussion: vi.fn(),
-  getDiscussionsByUserId: vi.fn(),
+  getAllDiscussions: vi.fn(),
   getDiscussionById: vi.fn(),
   updateDiscussion: vi.fn(),
   deleteDiscussion: vi.fn(),
   createMessage: vi.fn(),
   getMessagesByDiscussionId: vi.fn(),
   upsertModelConfig: vi.fn(),
-  getModelConfigsByUserId: vi.fn(),
+  getAllModelConfigs: vi.fn(),
   deleteModelConfig: vi.fn(),
-  upsertUserSettings: vi.fn(),
-  getUserSettings: vi.fn(),
+  getModelConfigByProvider: vi.fn(),
+  getDefaultSettings: vi.fn(),
+  updateDefaultSettings: vi.fn(),
+  getSetting: vi.fn(),
+  setSetting: vi.fn(),
+  getAllSettings: vi.fn(),
+  getDb: vi.fn(),
+  closeDb: vi.fn(),
 }));
 
 import * as db from "./db";
 
-type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
+// 单机版本的用户类型
+type LocalUser = {
+  id: number;
+  openId: string;
+  name: string;
+  email: string;
+  role: string;
+};
 
 function createAuthContext(): TrpcContext {
-  const user: AuthenticatedUser = {
+  const user: LocalUser = {
     id: 1,
-    openId: "test-user-123",
-    email: "test@example.com",
-    name: "Test User",
-    loginMethod: "manus",
-    role: "user",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    lastSignedIn: new Date(),
+    openId: "local-user",
+    name: "本地用户",
+    email: "local@localhost",
+    role: "admin",
   };
 
   return {
@@ -66,11 +75,10 @@ describe("discussion router", () => {
   });
 
   describe("discussion.list", () => {
-    it("returns discussions for authenticated user", async () => {
+    it("returns all discussions", async () => {
       const mockDiscussions = [
         {
           id: 1,
-          userId: 1,
           title: "Test Discussion",
           question: "What is the best approach?",
           status: "active" as const,
@@ -86,7 +94,7 @@ describe("discussion router", () => {
         },
       ];
 
-      vi.mocked(db.getDiscussionsByUserId).mockResolvedValue(mockDiscussions);
+      vi.mocked(db.getAllDiscussions).mockReturnValue(mockDiscussions);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -94,14 +102,7 @@ describe("discussion router", () => {
       const result = await caller.discussion.list();
 
       expect(result).toEqual(mockDiscussions);
-      expect(db.getDiscussionsByUserId).toHaveBeenCalledWith(1);
-    });
-
-    it("throws error for unauthenticated user", async () => {
-      const ctx = createUnauthContext();
-      const caller = appRouter.createCaller(ctx);
-
-      await expect(caller.discussion.list()).rejects.toThrow();
+      expect(db.getAllDiscussions).toHaveBeenCalled();
     });
   });
 
@@ -109,7 +110,6 @@ describe("discussion router", () => {
     it("creates a new discussion", async () => {
       const mockDiscussion = {
         id: 1,
-        userId: 1,
         title: "New Discussion",
         question: "Test question",
         status: "active" as const,
@@ -124,7 +124,7 @@ describe("discussion router", () => {
         updatedAt: new Date(),
       };
 
-      vi.mocked(db.createDiscussion).mockResolvedValue(mockDiscussion);
+      vi.mocked(db.createDiscussion).mockReturnValue(mockDiscussion);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -141,7 +141,6 @@ describe("discussion router", () => {
 
       expect(result).toEqual(mockDiscussion);
       expect(db.createDiscussion).toHaveBeenCalledWith({
-        userId: 1,
         title: "New Discussion",
         question: "Test question",
         guestModels: ["builtin", "openai"],
@@ -182,10 +181,9 @@ describe("discussion router", () => {
   });
 
   describe("discussion.get", () => {
-    it("returns discussion for owner", async () => {
+    it("returns discussion by id", async () => {
       const mockDiscussion = {
         id: 1,
-        userId: 1,
         title: "Test Discussion",
         question: "Test question",
         status: "active" as const,
@@ -200,7 +198,7 @@ describe("discussion router", () => {
         updatedAt: new Date(),
       };
 
-      vi.mocked(db.getDiscussionById).mockResolvedValue(mockDiscussion);
+      vi.mocked(db.getDiscussionById).mockReturnValue(mockDiscussion);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -210,47 +208,20 @@ describe("discussion router", () => {
       expect(result).toEqual(mockDiscussion);
     });
 
-    it("throws error for non-owner", async () => {
-      const mockDiscussion = {
-        id: 1,
-        userId: 999, // Different user
-        title: "Test Discussion",
-        question: "Test question",
-        status: "active" as const,
-        guestModels: ["builtin"],
-        judgeModel: "builtin",
-        confidenceThreshold: 0.8,
-        enableDynamicAgent: false,
-        dataReadLimit: 100,
-        finalVerdict: null,
-        confidenceScores: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      vi.mocked(db.getDiscussionById).mockResolvedValue(mockDiscussion);
-
-      const ctx = createAuthContext();
-      const caller = appRouter.createCaller(ctx);
-
-      await expect(caller.discussion.get({ id: 1 })).rejects.toThrow("讨论不存在或无权访问");
-    });
-
     it("throws error for non-existent discussion", async () => {
-      vi.mocked(db.getDiscussionById).mockResolvedValue(undefined);
+      vi.mocked(db.getDiscussionById).mockReturnValue(undefined);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
 
-      await expect(caller.discussion.get({ id: 999 })).rejects.toThrow("讨论不存在或无权访问");
+      await expect(caller.discussion.get({ id: 999 })).rejects.toThrow("讨论不存在");
     });
   });
 
   describe("discussion.delete", () => {
-    it("deletes discussion for owner", async () => {
+    it("deletes discussion by id", async () => {
       const mockDiscussion = {
         id: 1,
-        userId: 1,
         title: "Test Discussion",
         question: "Test question",
         status: "active" as const,
@@ -265,8 +236,8 @@ describe("discussion router", () => {
         updatedAt: new Date(),
       };
 
-      vi.mocked(db.getDiscussionById).mockResolvedValue(mockDiscussion);
-      vi.mocked(db.deleteDiscussion).mockResolvedValue();
+      vi.mocked(db.getDiscussionById).mockReturnValue(mockDiscussion);
+      vi.mocked(db.deleteDiscussion).mockReturnValue(undefined);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -285,10 +256,9 @@ describe("message router", () => {
   });
 
   describe("message.list", () => {
-    it("returns messages for discussion owner", async () => {
+    it("returns messages for discussion", async () => {
       const mockDiscussion = {
         id: 1,
-        userId: 1,
         title: "Test Discussion",
         question: "Test question",
         status: "active" as const,
@@ -324,8 +294,8 @@ describe("message router", () => {
         },
       ];
 
-      vi.mocked(db.getDiscussionById).mockResolvedValue(mockDiscussion);
-      vi.mocked(db.getMessagesByDiscussionId).mockResolvedValue(mockMessages);
+      vi.mocked(db.getDiscussionById).mockReturnValue(mockDiscussion);
+      vi.mocked(db.getMessagesByDiscussionId).mockReturnValue(mockMessages);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -341,7 +311,6 @@ describe("message router", () => {
     it("creates a host message", async () => {
       const mockDiscussion = {
         id: 1,
-        userId: 1,
         title: "Test Discussion",
         question: "Test question",
         status: "active" as const,
@@ -366,8 +335,8 @@ describe("message router", () => {
         createdAt: new Date(),
       };
 
-      vi.mocked(db.getDiscussionById).mockResolvedValue(mockDiscussion);
-      vi.mocked(db.createMessage).mockResolvedValue(mockMessage);
+      vi.mocked(db.getDiscussionById).mockReturnValue(mockDiscussion);
+      vi.mocked(db.createMessage).mockReturnValue(mockMessage);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -411,7 +380,6 @@ describe("modelConfig router", () => {
     it("saves model configuration with masked API key", async () => {
       const mockConfig = {
         id: 1,
-        userId: 1,
         modelProvider: "openai",
         apiKey: "sk-1234567890abcdefghijklmnop",
         baseUrl: null,
@@ -420,7 +388,7 @@ describe("modelConfig router", () => {
         updatedAt: new Date(),
       };
 
-      vi.mocked(db.upsertModelConfig).mockResolvedValue(mockConfig);
+      vi.mocked(db.upsertModelConfig).mockReturnValue(mockConfig);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);
@@ -433,7 +401,6 @@ describe("modelConfig router", () => {
 
       expect(result.apiKey).toBe("sk-12345...mnop");
       expect(db.upsertModelConfig).toHaveBeenCalledWith({
-        userId: 1,
         modelProvider: "openai",
         apiKey: "sk-1234567890abcdefghijklmnop",
         baseUrl: undefined,
@@ -447,7 +414,6 @@ describe("modelConfig router", () => {
       const mockConfigs = [
         {
           id: 1,
-          userId: 1,
           modelProvider: "openai",
           apiKey: "sk-1234567890abcdefghijklmnop",
           baseUrl: null,
@@ -457,7 +423,7 @@ describe("modelConfig router", () => {
         },
       ];
 
-      vi.mocked(db.getModelConfigsByUserId).mockResolvedValue(mockConfigs);
+      vi.mocked(db.getAllModelConfigs).mockReturnValue(mockConfigs);
 
       const ctx = createAuthContext();
       const caller = appRouter.createCaller(ctx);

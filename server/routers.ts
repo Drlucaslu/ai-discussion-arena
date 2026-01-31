@@ -1,21 +1,18 @@
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import {
   createDiscussion,
-  getDiscussionsByUserId,
+  getAllDiscussions,
   getDiscussionById,
   updateDiscussion,
   deleteDiscussion,
   createMessage,
   getMessagesByDiscussionId,
   upsertModelConfig,
-  getModelConfigsByUserId,
+  getAllModelConfigs,
   deleteModelConfig,
-  upsertUserSettings,
-  getUserSettings,
+  getDefaultSettings,
+  updateDefaultSettings,
 } from "./db";
 import { SUPPORTED_MODELS, ModelProvider, testApiKey } from "./aiModels";
 import {
@@ -28,38 +25,48 @@ import {
 } from "./discussionOrchestrator";
 import type { ModelConfig } from "./aiModels";
 
-export const appRouter = router({
-  system: systemRouter,
+// 辅助函数：获取模型配置 Map
+function getModelConfigsMap(): Map<string, ModelConfig> {
+  const configs = getAllModelConfigs();
+  const modelConfigs = new Map<string, ModelConfig>();
   
-  auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true } as const;
-    }),
-  }),
+  for (const config of configs) {
+    if (config.isEnabled) {
+      modelConfigs.set(config.modelProvider, {
+        provider: config.modelProvider as ModelProvider,
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || undefined,
+      });
+    }
+  }
+  
+  // 添加内置模型
+  modelConfigs.set('builtin', { provider: 'builtin' });
+  
+  return modelConfigs;
+}
 
+export const appRouter = router({
   // 讨论组管理
   discussion: router({
-    // 获取用户的所有讨论
-    list: protectedProcedure.query(async ({ ctx }) => {
-      return getDiscussionsByUserId(ctx.user.id);
+    // 获取所有讨论
+    list: publicProcedure.query(() => {
+      return getAllDiscussions();
     }),
 
     // 获取单个讨论详情
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.id);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .query(({ input }) => {
+        const discussion = getDiscussionById(input.id);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         return discussion;
       }),
 
     // 创建新讨论
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({
         title: z.string().min(1).max(255),
         question: z.string().min(1),
@@ -69,27 +76,24 @@ export const appRouter = router({
         enableDynamicAgent: z.boolean().default(false),
         dataReadLimit: z.number().min(1).max(1000).default(100),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await createDiscussion({
-          userId: ctx.user.id,
-          ...input,
-        });
+      .mutation(({ input }) => {
+        const discussion = createDiscussion(input);
         return discussion;
       }),
 
     // 更新讨论
-    update: protectedProcedure
+    update: publicProcedure
       .input(z.object({
         id: z.number(),
         title: z.string().min(1).max(255).optional(),
         status: z.enum(["active", "completed", "archived"]).optional(),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.id);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(({ input }) => {
+        const discussion = getDiscussionById(input.id);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
-        await updateDiscussion(input.id, {
+        updateDiscussion(input.id, {
           title: input.title,
           status: input.status,
         });
@@ -97,14 +101,14 @@ export const appRouter = router({
       }),
 
     // 删除讨论
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.id);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(({ input }) => {
+        const discussion = getDiscussionById(input.id);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
-        await deleteDiscussion(input.id);
+        deleteDiscussion(input.id);
         return { success: true };
       }),
   }),
@@ -112,29 +116,29 @@ export const appRouter = router({
   // 消息管理
   message: router({
     // 获取讨论的所有消息
-    list: protectedProcedure
+    list: publicProcedure
       .input(z.object({ discussionId: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .query(({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         return getMessagesByDiscussionId(input.discussionId);
       }),
 
     // 发送用户消息（主持人提问）
-    sendHost: protectedProcedure
+    sendHost: publicProcedure
       .input(z.object({
         discussionId: z.number(),
         content: z.string().min(1),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        const message = await createMessage({
+        const message = createMessage({
           discussionId: input.discussionId,
           role: "host",
           content: input.content,
@@ -147,30 +151,15 @@ export const appRouter = router({
   // AI 编排
   orchestrator: router({
     // 开始讨论
-    start: protectedProcedure
+    start: publicProcedure
       .input(z.object({ discussionId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        // 获取用户的模型配置
-        const userConfigs = await getModelConfigsByUserId(ctx.user.id);
-        const modelConfigs = new Map<string, ModelConfig>();
-        
-        for (const config of userConfigs) {
-          if (config.isEnabled) {
-            modelConfigs.set(config.modelProvider, {
-              provider: config.modelProvider as ModelProvider,
-              apiKey: config.apiKey,
-              baseUrl: config.baseUrl || undefined,
-            });
-          }
-        }
-        
-        // 添加内置模型
-        modelConfigs.set('builtin', { provider: 'builtin' });
+        const modelConfigs = getModelConfigsMap();
         
         const context: DiscussionContext = {
           discussion,
@@ -183,32 +172,19 @@ export const appRouter = router({
       }),
 
     // 执行一轮讨论
-    executeRound: protectedProcedure
+    executeRound: publicProcedure
       .input(z.object({
         discussionId: z.number(),
         roundNumber: z.number().min(1),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        const messages = await getMessagesByDiscussionId(input.discussionId);
-        const userConfigs = await getModelConfigsByUserId(ctx.user.id);
-        const modelConfigs = new Map<string, ModelConfig>();
-        
-        for (const config of userConfigs) {
-          if (config.isEnabled) {
-            modelConfigs.set(config.modelProvider, {
-              provider: config.modelProvider as ModelProvider,
-              apiKey: config.apiKey,
-              baseUrl: config.baseUrl || undefined,
-            });
-          }
-        }
-        
-        modelConfigs.set('builtin', { provider: 'builtin' });
+        const messages = getMessagesByDiscussionId(input.discussionId);
+        const modelConfigs = getModelConfigsMap();
         
         const context: DiscussionContext = {
           discussion,
@@ -221,32 +197,19 @@ export const appRouter = router({
       }),
 
     // 让裁判发言
-    invokeJudge: protectedProcedure
+    invokeJudge: publicProcedure
       .input(z.object({
         discussionId: z.number(),
         instruction: z.string().optional(),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        const messages = await getMessagesByDiscussionId(input.discussionId);
-        const userConfigs = await getModelConfigsByUserId(ctx.user.id);
-        const modelConfigs = new Map<string, ModelConfig>();
-        
-        for (const config of userConfigs) {
-          if (config.isEnabled) {
-            modelConfigs.set(config.modelProvider, {
-              provider: config.modelProvider as ModelProvider,
-              apiKey: config.apiKey,
-              baseUrl: config.baseUrl || undefined,
-            });
-          }
-        }
-        
-        modelConfigs.set('builtin', { provider: 'builtin' });
+        const messages = getMessagesByDiscussionId(input.discussionId);
+        const modelConfigs = getModelConfigsMap();
         
         const context: DiscussionContext = {
           discussion,
@@ -259,32 +222,19 @@ export const appRouter = router({
       }),
 
     // 让嘉宾发言
-    invokeGuest: protectedProcedure
+    invokeGuest: publicProcedure
       .input(z.object({
         discussionId: z.number(),
         guestModel: z.string(),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        const messages = await getMessagesByDiscussionId(input.discussionId);
-        const userConfigs = await getModelConfigsByUserId(ctx.user.id);
-        const modelConfigs = new Map<string, ModelConfig>();
-        
-        for (const config of userConfigs) {
-          if (config.isEnabled) {
-            modelConfigs.set(config.modelProvider, {
-              provider: config.modelProvider as ModelProvider,
-              apiKey: config.apiKey,
-              baseUrl: config.baseUrl || undefined,
-            });
-          }
-        }
-        
-        modelConfigs.set('builtin', { provider: 'builtin' });
+        const messages = getMessagesByDiscussionId(input.discussionId);
+        const modelConfigs = getModelConfigsMap();
         
         const context: DiscussionContext = {
           discussion,
@@ -297,29 +247,16 @@ export const appRouter = router({
       }),
 
     // 请求最终裁决
-    requestVerdict: protectedProcedure
+    requestVerdict: publicProcedure
       .input(z.object({ discussionId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const discussion = await getDiscussionById(input.discussionId);
-        if (!discussion || discussion.userId !== ctx.user.id) {
-          throw new Error("讨论不存在或无权访问");
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
         }
         
-        const messages = await getMessagesByDiscussionId(input.discussionId);
-        const userConfigs = await getModelConfigsByUserId(ctx.user.id);
-        const modelConfigs = new Map<string, ModelConfig>();
-        
-        for (const config of userConfigs) {
-          if (config.isEnabled) {
-            modelConfigs.set(config.modelProvider, {
-              provider: config.modelProvider as ModelProvider,
-              apiKey: config.apiKey,
-              baseUrl: config.baseUrl || undefined,
-            });
-          }
-        }
-        
-        modelConfigs.set('builtin', { provider: 'builtin' });
+        const messages = getMessagesByDiscussionId(input.discussionId);
+        const modelConfigs = getModelConfigsMap();
         
         const context: DiscussionContext = {
           discussion,
@@ -337,9 +274,9 @@ export const appRouter = router({
     // 获取支持的模型列表
     supportedModels: publicProcedure.query(() => SUPPORTED_MODELS),
 
-    // 获取用户的模型配置
-    list: protectedProcedure.query(async ({ ctx }) => {
-      const configs = await getModelConfigsByUserId(ctx.user.id);
+    // 获取模型配置
+    list: publicProcedure.query(() => {
+      const configs = getAllModelConfigs();
       // 隐藏 API Key 的完整内容
       return configs.map(c => ({
         ...c,
@@ -348,18 +285,15 @@ export const appRouter = router({
     }),
 
     // 保存模型配置
-    save: protectedProcedure
+    save: publicProcedure
       .input(z.object({
         modelProvider: z.string(),
         apiKey: z.string(),
         baseUrl: z.string().optional(),
         isEnabled: z.boolean().default(true),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const config = await upsertModelConfig({
-          userId: ctx.user.id,
-          ...input,
-        });
+      .mutation(({ input }) => {
+        const config = upsertModelConfig(input);
         return {
           ...config,
           apiKey: `${config.apiKey.slice(0, 8)}...${config.apiKey.slice(-4)}`,
@@ -367,15 +301,15 @@ export const appRouter = router({
       }),
 
     // 删除模型配置
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
-        await deleteModelConfig(input.id);
+      .mutation(({ input }) => {
+        deleteModelConfig(input.id);
         return { success: true };
       }),
 
     // 测试 API Key
-    test: protectedProcedure
+    test: publicProcedure
       .input(z.object({
         provider: z.string(),
         apiKey: z.string(),
@@ -391,24 +325,21 @@ export const appRouter = router({
       }),
   }),
 
-  // 用户设置
+  // 系统设置
   settings: router({
-    // 获取用户设置
-    get: protectedProcedure.query(async ({ ctx }) => {
-      const settings = await getUserSettings(ctx.user.id);
-      if (settings) {
-        return {
-          ...settings,
-          enterpriseApiKey: settings.enterpriseApiKey 
-            ? `${settings.enterpriseApiKey.slice(0, 8)}...` 
-            : null,
-        };
-      }
-      return null;
+    // 获取默认设置
+    get: publicProcedure.query(() => {
+      const settings = getDefaultSettings();
+      return {
+        ...settings,
+        enterpriseApiKey: settings.enterpriseApiKey 
+          ? `${settings.enterpriseApiKey.slice(0, 8)}...` 
+          : undefined,
+      };
     }),
 
-    // 保存用户设置
-    save: protectedProcedure
+    // 保存默认设置
+    save: publicProcedure
       .input(z.object({
         defaultJudgeModel: z.string().optional(),
         defaultConfidenceThreshold: z.number().min(0).max(1).optional(),
@@ -417,16 +348,13 @@ export const appRouter = router({
         enterpriseApiUrl: z.string().optional(),
         enterpriseApiKey: z.string().optional(),
       }))
-      .mutation(async ({ input, ctx }) => {
-        const settings = await upsertUserSettings({
-          userId: ctx.user.id,
-          ...input,
-        });
+      .mutation(({ input }) => {
+        const settings = updateDefaultSettings(input);
         return {
           ...settings,
           enterpriseApiKey: settings.enterpriseApiKey 
             ? `${settings.enterpriseApiKey.slice(0, 8)}...` 
-            : null,
+            : undefined,
         };
       }),
   }),

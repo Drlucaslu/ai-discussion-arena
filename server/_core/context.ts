@@ -1,24 +1,31 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
-import type { User } from "../../drizzle/schema";
-import { sdk } from "./sdk";
+
+// 单机版本的用户类型
+export type LocalUser = {
+  id: number;
+  openId: string;
+  name: string;
+  email: string;
+  role: string;
+};
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
-  user: User | null;
+  user: LocalUser | null;
 };
 
 export async function createContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
-  let user: User | null = null;
-
-  try {
-    user = await sdk.authenticateRequest(opts.req);
-  } catch (error) {
-    // Authentication is optional for public procedures.
-    user = null;
-  }
+  // 单机版本：始终返回本地用户，无需认证
+  const user: LocalUser = {
+    id: 1,
+    openId: 'local-user',
+    name: '本地用户',
+    email: 'local@localhost',
+    role: 'admin',
+  };
 
   return {
     req: opts.req,
