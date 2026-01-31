@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc } from "@/lib/trpc";
 import { 
   ArrowLeft, 
@@ -18,9 +19,11 @@ import {
   Trash2,
   Plus,
   CheckCircle2,
-  XCircle
+  XCircle,
+  PlayCircle,
+  Terminal
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -42,6 +45,15 @@ export default function Settings() {
     apiKey: '',
     baseUrl: '',
   });
+
+  // 测试状态
+  const [isTesting, setIsTesting] = useState(false);
+  const [testLogs, setTestLogs] = useState<string[]>([]);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   // 用户设置表单
   const [userSettingsForm, setUserSettingsForm] = useState({
@@ -70,6 +82,8 @@ export default function Settings() {
     onSuccess: () => {
       toast.success('API Key 保存成功');
       setNewConfig({ modelProvider: '', apiKey: '', baseUrl: '' });
+      setTestLogs([]);
+      setTestResult(null);
       refetchConfigs();
     },
     onError: (error) => {
@@ -85,6 +99,33 @@ export default function Settings() {
     },
     onError: (error) => {
       toast.error(`删除失败: ${error.message}`);
+    },
+  });
+
+  // 测试 API Key
+  const testApiKeyMutation = trpc.modelConfig.test.useMutation({
+    onSuccess: (result) => {
+      setTestLogs(result.logs);
+      setTestResult({
+        success: result.success,
+        message: result.message,
+      });
+      setIsTesting(false);
+      
+      if (result.success) {
+        toast.success('API Key 验证成功！');
+      } else {
+        toast.error(result.message);
+      }
+    },
+    onError: (error) => {
+      setTestLogs(prev => [...prev, `[错误] ${error.message}`]);
+      setTestResult({
+        success: false,
+        message: error.message,
+      });
+      setIsTesting(false);
+      toast.error(`测试失败: ${error.message}`);
     },
   });
 
@@ -112,11 +153,39 @@ export default function Settings() {
     }
   }, [userSettings]);
 
+  // 自动滚动到日志底部
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [testLogs]);
+
+  const handleTestApiKey = () => {
+    if (!newConfig.modelProvider || !newConfig.apiKey) {
+      toast.error('请选择模型提供商并输入 API Key');
+      return;
+    }
+    
+    setIsTesting(true);
+    setTestLogs([`[${new Date().toLocaleTimeString()}] 开始测试...`]);
+    setTestResult(null);
+    
+    testApiKeyMutation.mutate({
+      provider: newConfig.modelProvider,
+      apiKey: newConfig.apiKey,
+      baseUrl: newConfig.baseUrl || undefined,
+    });
+  };
+
   const handleSaveConfig = () => {
     if (!newConfig.modelProvider || !newConfig.apiKey) {
       toast.error('请选择模型提供商并输入 API Key');
       return;
     }
+    
+    // 如果还没测试过，先提示测试
+    if (!testResult) {
+      toast.warning('建议先测试 API Key 是否有效');
+    }
+    
     saveConfigMutation.mutate({
       modelProvider: newConfig.modelProvider,
       apiKey: newConfig.apiKey,
@@ -187,7 +256,11 @@ export default function Settings() {
                     <Label>模型提供商</Label>
                     <Select
                       value={newConfig.modelProvider}
-                      onValueChange={(value) => setNewConfig(prev => ({ ...prev, modelProvider: value }))}
+                      onValueChange={(value) => {
+                        setNewConfig(prev => ({ ...prev, modelProvider: value }));
+                        setTestLogs([]);
+                        setTestResult(null);
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="选择提供商" />
@@ -213,7 +286,10 @@ export default function Settings() {
                       type="password"
                       placeholder={MODEL_PROVIDERS.find(p => p.id === newConfig.modelProvider)?.placeholder || '输入 API Key'}
                       value={newConfig.apiKey}
-                      onChange={(e) => setNewConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                      onChange={(e) => {
+                        setNewConfig(prev => ({ ...prev, apiKey: e.target.value }));
+                        setTestResult(null);
+                      }}
                     />
                   </div>
                 </div>
@@ -230,14 +306,81 @@ export default function Settings() {
                   </p>
                 </div>
 
-                <Button onClick={handleSaveConfig} disabled={saveConfigMutation.isPending}>
-                  {saveConfigMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" />
-                  )}
-                  添加配置
-                </Button>
+                {/* 测试日志区域 */}
+                {(testLogs.length > 0 || isTesting) && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-muted-foreground" />
+                      <Label>测试日志</Label>
+                    </div>
+                    <ScrollArea className="h-40 w-full rounded-md border bg-zinc-950 p-3">
+                      <div className="font-mono text-xs space-y-1">
+                        {testLogs.map((log, index) => (
+                          <div 
+                            key={index} 
+                            className={`${
+                              log.includes('✅') ? 'text-green-400' : 
+                              log.includes('❌') || log.includes('错误') ? 'text-red-400' : 
+                              'text-zinc-300'
+                            }`}
+                          >
+                            {log}
+                          </div>
+                        ))}
+                        {isTesting && (
+                          <div className="text-blue-400 flex items-center gap-2">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            正在测试...
+                          </div>
+                        )}
+                        <div ref={logsEndRef} />
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {/* 测试结果提示 */}
+                {testResult && (
+                  <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                    testResult.success 
+                      ? 'bg-green-500/10 text-green-500 border border-green-500/20' 
+                      : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                  }`}>
+                    {testResult.success ? (
+                      <CheckCircle2 className="w-5 h-5" />
+                    ) : (
+                      <XCircle className="w-5 h-5" />
+                    )}
+                    <span className="text-sm">{testResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    onClick={handleTestApiKey} 
+                    disabled={isTesting || !newConfig.modelProvider || !newConfig.apiKey}
+                  >
+                    {isTesting ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <PlayCircle className="w-4 h-4 mr-2" />
+                    )}
+                    测试连接
+                  </Button>
+                  
+                  <Button 
+                    onClick={handleSaveConfig} 
+                    disabled={saveConfigMutation.isPending || !newConfig.modelProvider || !newConfig.apiKey}
+                  >
+                    {saveConfigMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    {testResult?.success ? '保存配置' : '跳过测试并保存'}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 

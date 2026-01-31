@@ -308,3 +308,121 @@ export function getModelDisplayName(provider: ModelProvider, model?: string): st
   );
   return found?.name || `${provider}/${model || 'default'}`;
 }
+
+
+/**
+ * API Key 测试结果
+ */
+export interface ApiKeyTestResult {
+  success: boolean;
+  provider: ModelProvider;
+  model: string;
+  responseTime: number;
+  message: string;
+  logs: string[];
+  error?: string;
+}
+
+/**
+ * 测试 API Key 是否有效
+ * 通过发送一个简单的问答请求来验证
+ */
+export async function testApiKey(
+  config: ModelConfig
+): Promise<ApiKeyTestResult> {
+  const logs: string[] = [];
+  const startTime = Date.now();
+  
+  const provider = config.provider;
+  const model = MODEL_CONFIGS[provider]?.defaultModel || 'unknown';
+  
+  logs.push(`[${new Date().toISOString()}] 开始测试 ${provider} API...`);
+  logs.push(`[${new Date().toISOString()}] 目标模型: ${model}`);
+  logs.push(`[${new Date().toISOString()}] API Key: ${config.apiKey?.slice(0, 8)}...${config.apiKey?.slice(-4)}`);
+  
+  // 内置模型不需要测试
+  if (provider === 'builtin') {
+    logs.push(`[${new Date().toISOString()}] 内置模型无需测试 API Key`);
+    return {
+      success: true,
+      provider,
+      model,
+      responseTime: Date.now() - startTime,
+      message: '内置模型可直接使用',
+      logs,
+    };
+  }
+  
+  // 检查 API Key 是否存在
+  if (!config.apiKey) {
+    logs.push(`[${new Date().toISOString()}] 错误: API Key 为空`);
+    return {
+      success: false,
+      provider,
+      model,
+      responseTime: Date.now() - startTime,
+      message: 'API Key 不能为空',
+      logs,
+      error: 'API Key 不能为空',
+    };
+  }
+  
+  logs.push(`[${new Date().toISOString()}] 发送测试请求...`);
+  
+  try {
+    // 发送简单的测试请求
+    const testMessages: ChatMessage[] = [
+      { role: 'user', content: '请回复"测试成功"四个字。' }
+    ];
+    
+    const result = await callAIModel(config, {
+      messages: testMessages,
+      maxTokens: 50,
+      temperature: 0,
+    }, false); // 禁用回退，直接测试目标 API
+    
+    const responseTime = Date.now() - startTime;
+    logs.push(`[${new Date().toISOString()}] 收到响应，耗时: ${responseTime}ms`);
+    logs.push(`[${new Date().toISOString()}] 响应内容: ${result.content.slice(0, 100)}...`);
+    logs.push(`[${new Date().toISOString()}] ✅ 测试成功！`);
+    
+    return {
+      success: true,
+      provider,
+      model: result.model || model,
+      responseTime,
+      message: `API Key 验证成功，响应耗时 ${responseTime}ms`,
+      logs,
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    logs.push(`[${new Date().toISOString()}] ❌ 测试失败`);
+    logs.push(`[${new Date().toISOString()}] 错误信息: ${errorMessage}`);
+    
+    // 解析常见错误类型
+    let friendlyMessage = errorMessage;
+    if (errorMessage.includes('401') || errorMessage.includes('Incorrect API key')) {
+      friendlyMessage = 'API Key 无效或已过期，请检查后重新输入';
+    } else if (errorMessage.includes('403')) {
+      friendlyMessage = 'API Key 权限不足，请确认账户状态';
+    } else if (errorMessage.includes('429')) {
+      friendlyMessage = 'API 调用频率超限，请稍后再试';
+    } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
+      friendlyMessage = 'API 服务暂时不可用，请稍后再试';
+    } else if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
+      friendlyMessage = '请求超时，请检查网络连接';
+    }
+    
+    return {
+      success: false,
+      provider,
+      model,
+      responseTime,
+      message: friendlyMessage,
+      logs,
+      error: errorMessage,
+    };
+  }
+}

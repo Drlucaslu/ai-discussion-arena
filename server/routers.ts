@@ -17,7 +17,7 @@ import {
   upsertUserSettings,
   getUserSettings,
 } from "./db";
-import { SUPPORTED_MODELS, ModelProvider } from "./aiModels";
+import { SUPPORTED_MODELS, ModelProvider, testApiKey } from "./aiModels";
 import {
   startDiscussion,
   executeDiscussionRound,
@@ -372,6 +372,22 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         await deleteModelConfig(input.id);
         return { success: true };
+      }),
+
+    // 测试 API Key
+    test: protectedProcedure
+      .input(z.object({
+        provider: z.string(),
+        apiKey: z.string(),
+        baseUrl: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await testApiKey({
+          provider: input.provider as ModelProvider,
+          apiKey: input.apiKey,
+          baseUrl: input.baseUrl,
+        });
+        return result;
       }),
   }),
 
