@@ -64,3 +64,7 @@
 ## 安装脚本修复
 - [x] 更新 install.sh 中的 GitHub 仓库地址为用户实际地址 (Drlucaslu/ai-discussion-arena)
 - [x] 更新 README.md 中的 GitHub 仓库地址
+
+## 依赖问题修复
+- [x] 修复 @builder.io/vite-plugin-jsx-loc 与 Vite 7.x 的版本冲突（已移除该插件）
+- [x] 移除 vite-plugin-manus-runtime 平台特有插件
