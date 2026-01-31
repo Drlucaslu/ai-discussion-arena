@@ -60,3 +60,7 @@
 - [x] 实现 API Key 配置后的即时验证测试功能
 - [x] 添加实时日志显示界面
 - [x] 提供友好的错误提示和调试信息
+
+## 安装脚本修复
+- [x] 更新 install.sh 中的 GitHub 仓库地址为用户实际地址 (Drlucaslu/ai-discussion-arena)
+- [x] 更新 README.md 中的 GitHub 仓库地址

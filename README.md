@@ -21,14 +21,14 @@
 ### 方式一：一键安装（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/ai-discussion-arena/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Drlucaslu/ai-discussion-arena/main/install.sh | bash
 ```
 
 ### 方式二：手动安装
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/your-username/ai-discussion-arena.git
+git clone https://github.com/Drlucaslu/ai-discussion-arena.git
 cd ai-discussion-arena
 
 # 2. 安装依赖

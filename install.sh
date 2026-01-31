@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AI 讨论竞技场 - 安装脚本
-# 使用方法: curl -fsSL https://raw.githubusercontent.com/your-repo/ai-discussion-arena/main/install.sh | bash
+# 使用方法: curl -fsSL https://raw.githubusercontent.com/Drlucaslu/ai-discussion-arena/main/install.sh | bash
 
 set -e
 
@@ -99,7 +99,7 @@ main() {
 
     # 克隆仓库
     print_info "下载项目代码..."
-    git clone https://github.com/your-username/ai-discussion-arena.git "$INSTALL_DIR"
+    git clone https://github.com/Drlucaslu/ai-discussion-arena.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     print_success "代码下载完成"
 
