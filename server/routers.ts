@@ -22,6 +22,8 @@ import {
   DiscussionContext,
   invokeJudge,
   invokeGuest,
+  getDiscussionLogs,
+  clearDiscussionLogs,
 } from "./discussionOrchestrator";
 import type { ModelConfig } from "./aiModels";
 
@@ -219,6 +221,21 @@ export const appRouter = router({
         
         const result = await invokeJudge(context, input.instruction);
         return result;
+      }),
+
+    // 获取讨论日志
+    getLogs: publicProcedure
+      .input(z.object({ discussionId: z.number() }))
+      .query(({ input }) => {
+        return getDiscussionLogs(input.discussionId);
+      }),
+
+    // 清除讨论日志
+    clearLogs: publicProcedure
+      .input(z.object({ discussionId: z.number() }))
+      .mutation(({ input }) => {
+        clearDiscussionLogs(input.discussionId);
+        return { success: true };
       }),
 
     // 让嘉宾发言

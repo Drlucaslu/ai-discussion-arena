@@ -1,6 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -17,7 +17,12 @@ import {
   Square,
   CheckCircle2,
   AlertCircle,
-  MessageSquare
+  MessageSquare,
+  Terminal,
+  ChevronDown,
+  ChevronUp,
+  Trash2,
+  RefreshCw
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
@@ -39,15 +44,33 @@ const ROLE_LABELS: Record<string, string> = {
   system: '系统',
 };
 
+// 日志级别颜色
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: 'text-blue-400',
+  warn: 'text-yellow-400',
+  error: 'text-red-400',
+  debug: 'text-gray-400',
+};
+
+// 日志级别中文标签
+const LOG_LEVEL_LABELS: Record<string, string> = {
+  info: '信息',
+  warn: '警告',
+  error: '错误',
+  debug: '调试',
+};
+
 export default function Discussion() {
   const { id } = useParams<{ id: string }>();
   const discussionId = parseInt(id || '0');
   const [, navigate] = useLocation();
   const { isAuthenticated, loading: authLoading } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
   
   const [isRunning, setIsRunning] = useState(false);
   const [currentRound, setCurrentRound] = useState(1);
+  const [showLogs, setShowLogs] = useState(true);
 
   // 获取讨论详情
   const { data: discussion, isLoading: discussionLoading, refetch: refetchDiscussion } = trpc.discussion.get.useQuery(
@@ -61,14 +84,33 @@ export default function Discussion() {
     { enabled: isAuthenticated && discussionId > 0 }
   );
 
+  // 获取讨论日志
+  const { data: logs, refetch: refetchLogs } = trpc.orchestrator.getLogs.useQuery(
+    { discussionId },
+    { 
+      enabled: isAuthenticated && discussionId > 0,
+      refetchInterval: isRunning ? 1000 : false, // 运行时每秒刷新
+    }
+  );
+
+  // 清除日志
+  const clearLogsMutation = trpc.orchestrator.clearLogs.useMutation({
+    onSuccess: () => {
+      refetchLogs();
+      toast.success('日志已清除');
+    },
+  });
+
   // 开始讨论
   const startMutation = trpc.orchestrator.start.useMutation({
     onSuccess: () => {
       refetchMessages();
+      refetchLogs();
     },
     onError: (error) => {
       toast.error(`启动失败: ${error.message}`);
       setIsRunning(false);
+      refetchLogs();
     },
   });
 
@@ -76,6 +118,7 @@ export default function Discussion() {
   const executeRoundMutation = trpc.orchestrator.executeRound.useMutation({
     onSuccess: (result) => {
       refetchMessages();
+      refetchLogs();
       if (result.isComplete) {
         setIsRunning(false);
         refetchDiscussion();
@@ -87,6 +130,7 @@ export default function Discussion() {
     onError: (error) => {
       toast.error(`执行失败: ${error.message}`);
       setIsRunning(false);
+      refetchLogs();
     },
   });
 
@@ -94,6 +138,7 @@ export default function Discussion() {
   const requestVerdictMutation = trpc.orchestrator.requestVerdict.useMutation({
     onSuccess: (result) => {
       refetchMessages();
+      refetchLogs();
       if (result.isComplete) {
         refetchDiscussion();
         toast.success('裁判已做出最终裁决');
@@ -103,6 +148,7 @@ export default function Discussion() {
     onError: (error) => {
       toast.error(`裁决请求失败: ${error.message}`);
       setIsRunning(false);
+      refetchLogs();
     },
   });
 
@@ -110,6 +156,11 @@ export default function Discussion() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 日志自动滚动到底部
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
   // 自动执行讨论轮次
   useEffect(() => {
@@ -137,6 +188,21 @@ export default function Discussion() {
   const handleRequestVerdict = () => {
     setIsRunning(true);
     requestVerdictMutation.mutate({ discussionId });
+  };
+
+  const handleClearLogs = () => {
+    clearLogsMutation.mutate({ discussionId });
+  };
+
+  // 格式化时间戳
+  const formatTimestamp = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('zh-CN', { 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit',
+      hour12: false 
+    });
   };
 
   // 加载状态
@@ -313,77 +379,186 @@ export default function Discussion() {
         </div>
 
         {/* 右侧信息面板 */}
-        <aside className="w-80 border-l bg-card p-4 hidden lg:block">
-          <h3 className="font-semibold mb-4">讨论配置</h3>
-          
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">嘉宾模型</p>
-              <div className="flex flex-wrap gap-1">
-                {discussion.guestModels.map((model, index) => (
-                  <Badge key={index} variant="secondary">{model}</Badge>
-                ))}
-              </div>
-            </div>
-
-            <Separator />
-
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">裁判模型</p>
-              <Badge>{discussion.judgeModel}</Badge>
-            </div>
-
-            <Separator />
-
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">置信度阈值</p>
-              <p className="font-medium">{discussion.confidenceThreshold}</p>
-            </div>
-
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">动态 Agent</p>
-              <p className="font-medium">{discussion.enableDynamicAgent ? '已启用' : '已禁用'}</p>
-            </div>
-
-            {discussion.enableDynamicAgent && (
+        <aside className="w-80 border-l bg-card hidden lg:flex lg:flex-col">
+          {/* 讨论配置 */}
+          <div className="p-4 border-b">
+            <h3 className="font-semibold mb-4">讨论配置</h3>
+            
+            <div className="space-y-4">
               <div>
-                <p className="text-sm text-muted-foreground mb-2">数据读取上限</p>
-                <p className="font-medium">{discussion.dataReadLimit} 条</p>
-              </div>
-            )}
-
-            {/* 最终裁决 */}
-            {discussion.status === 'completed' && discussion.finalVerdict && (
-              <>
-                <Separator />
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <CheckCircle2 className="w-4 h-4 text-green-500" />
-                    <p className="text-sm font-medium">最终裁决</p>
-                  </div>
-                  <Card>
-                    <CardContent className="p-3 text-sm">
-                      <Streamdown>{discussion.finalVerdict}</Streamdown>
-                    </CardContent>
-                  </Card>
+                <p className="text-sm text-muted-foreground mb-2">嘉宾模型</p>
+                <div className="flex flex-wrap gap-1">
+                  {discussion.guestModels.map((model, index) => (
+                    <Badge key={index} variant="secondary">{model}</Badge>
+                  ))}
                 </div>
+              </div>
 
-                {discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0 && (
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">裁判模型</p>
+                <Badge>{discussion.judgeModel}</Badge>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">置信度阈值</p>
+                <p className="font-medium">{discussion.confidenceThreshold}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">动态 Agent</p>
+                <p className="font-medium">{discussion.enableDynamicAgent ? '已启用' : '已禁用'}</p>
+              </div>
+
+              {discussion.enableDynamicAgent && (
+                <div>
+                  <p className="text-sm text-muted-foreground mb-2">数据读取上限</p>
+                  <p className="font-medium">{discussion.dataReadLimit} 条</p>
+                </div>
+              )}
+
+              {/* 最终裁决 */}
+              {discussion.status === 'completed' && discussion.finalVerdict && (
+                <>
+                  <Separator />
                   <div>
-                    <p className="text-sm font-medium mb-2">置信度评分</p>
-                    <div className="space-y-2">
-                      {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
-                        <div key={hypothesis} className="flex items-center justify-between text-sm">
-                          <span className="truncate flex-1 mr-2">{hypothesis}</span>
-                          <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'}>
-                            {(score as number).toFixed(2)}
-                          </Badge>
-                        </div>
-                      ))}
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      <p className="text-sm font-medium">最终裁决</p>
                     </div>
+                    <Card>
+                      <CardContent className="p-3 text-sm">
+                        <Streamdown>{discussion.finalVerdict}</Streamdown>
+                      </CardContent>
+                    </Card>
                   </div>
+
+                  {discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium mb-2">置信度评分</p>
+                      <div className="space-y-2">
+                        {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
+                          <div key={hypothesis} className="flex items-center justify-between text-sm">
+                            <span className="truncate flex-1 mr-2">{hypothesis}</span>
+                            <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'}>
+                              {(score as number).toFixed(2)}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* 调试日志面板 */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div 
+              className="p-3 border-b flex items-center justify-between cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={() => setShowLogs(!showLogs)}
+            >
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-muted-foreground" />
+                <span className="font-medium text-sm">调试日志</span>
+                {logs && logs.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {logs.length}
+                  </Badge>
                 )}
-              </>
+              </div>
+              <div className="flex items-center gap-1">
+                {showLogs && (
+                  <>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        refetchLogs();
+                      }}
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleClearLogs();
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </>
+                )}
+                {showLogs ? (
+                  <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                )}
+              </div>
+            </div>
+
+            {showLogs && (
+              <ScrollArea className="flex-1">
+                <div className="p-2 space-y-1 font-mono text-xs">
+                  {!logs || logs.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>暂无日志</p>
+                      <p className="text-xs mt-1">开始讨论后将显示 API 调用日志</p>
+                    </div>
+                  ) : (
+                    logs.map((log, index) => (
+                      <div 
+                        key={index} 
+                        className={`p-2 rounded bg-muted/30 border-l-2 ${
+                          log.level === 'error' ? 'border-red-500 bg-red-500/10' :
+                          log.level === 'warn' ? 'border-yellow-500 bg-yellow-500/10' :
+                          log.level === 'info' ? 'border-blue-500 bg-blue-500/10' :
+                          'border-gray-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-muted-foreground">
+                            {formatTimestamp(log.timestamp)}
+                          </span>
+                          <Badge 
+                            variant="outline" 
+                            className={`text-[10px] px-1 py-0 ${LOG_LEVEL_COLORS[log.level]}`}
+                          >
+                            {LOG_LEVEL_LABELS[log.level]}
+                          </Badge>
+                          <span className="text-muted-foreground truncate">
+                            [{log.source}]
+                          </span>
+                        </div>
+                        <p className={`${LOG_LEVEL_COLORS[log.level]} break-words`}>
+                          {log.message}
+                        </p>
+                        {log.details && Object.keys(log.details).length > 0 && (
+                          <details className="mt-1">
+                            <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
+                              详细信息
+                            </summary>
+                            <pre className="mt-1 p-1 bg-background rounded text-[10px] overflow-x-auto">
+                              {JSON.stringify(log.details, null, 2)}
+                            </pre>
+                          </details>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  <div ref={logsEndRef} />
+                </div>
+              </ScrollArea>
             )}
           </div>
         </aside>

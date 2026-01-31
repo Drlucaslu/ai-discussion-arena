@@ -48,6 +48,61 @@ export interface OrchestratorResult {
   };
 }
 
+// 讨论日志管理
+export interface DiscussionLog {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  source: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+// 全局日志存储（按讨论 ID 分组）
+const discussionLogs: Map<number, DiscussionLog[]> = new Map();
+
+/**
+ * 添加讨论日志
+ */
+export function addDiscussionLog(
+  discussionId: number,
+  level: DiscussionLog['level'],
+  source: string,
+  message: string,
+  details?: Record<string, unknown>
+): void {
+  if (!discussionLogs.has(discussionId)) {
+    discussionLogs.set(discussionId, []);
+  }
+  
+  const logs = discussionLogs.get(discussionId)!;
+  logs.push({
+    timestamp: new Date().toISOString(),
+    level,
+    source,
+    message,
+    details,
+  });
+  
+  // 限制日志数量，最多保留 500 条
+  if (logs.length > 500) {
+    logs.splice(0, logs.length - 500);
+  }
+}
+
+/**
+ * 获取讨论日志
+ */
+export function getDiscussionLogs(discussionId: number): DiscussionLog[] {
+  return discussionLogs.get(discussionId) || [];
+}
+
+/**
+ * 清除讨论日志
+ */
+export function clearDiscussionLogs(discussionId: number): void {
+  discussionLogs.delete(discussionId);
+}
+
 /**
  * 解析裁判的置信度评分
  */
@@ -132,26 +187,49 @@ export async function invokeJudge(
   
   const judgeConfig = modelConfigs.get(discussion.judgeModel);
   if (!judgeConfig) {
+    addDiscussionLog(discussion.id, 'error', '裁判', `模型 ${discussion.judgeModel} 未配置`);
     throw new Error(`裁判模型 ${discussion.judgeModel} 未配置`);
   }
+  
+  addDiscussionLog(discussion.id, 'info', '裁判', `准备调用裁判模型: ${discussion.judgeModel}`, {
+    provider: judgeConfig.provider,
+    hasApiKey: !!judgeConfig.apiKey,
+  });
   
   const chatHistory = buildChatHistory(messages, 'judge');
   
   // 添加特殊指令
   if (instruction) {
     chatHistory.push({ role: 'user', content: instruction });
+    addDiscussionLog(discussion.id, 'debug', '裁判', `添加指令: ${instruction.slice(0, 50)}...`);
   }
   
+  addDiscussionLog(discussion.id, 'info', '裁判', `发送 API 请求...`, {
+    messageCount: chatHistory.length,
+  });
+  
+  const startTime = Date.now();
   const result = await callAIModel(judgeConfig, {
     messages: chatHistory,
     temperature: 0.7,
+  });
+  const responseTime = Date.now() - startTime;
+  
+  addDiscussionLog(discussion.id, 'info', '裁判', `收到响应，耗时 ${responseTime}ms`, {
+    responseTime,
+    contentLength: result.content.length,
+    fallbackUsed: result.fallbackUsed,
   });
   
   // 确定实际使用的模型名称
   let modelName = getModelDisplayName(judgeConfig.provider);
   if (result.fallbackUsed) {
     modelName = `内置模型 (Manus)`;
-    console.log(`[裁判] 回退到内置模型，原因: ${result.originalError}`);
+    addDiscussionLog(discussion.id, 'warn', '裁判', `回退到内置模型`, {
+      originalError: result.originalError,
+    });
+  } else {
+    addDiscussionLog(discussion.id, 'info', '裁判', `成功使用模型: ${modelName}`);
   }
   
   // 保存消息
@@ -201,21 +279,44 @@ export async function invokeGuest(
   
   const guestConfig = modelConfigs.get(guestModel);
   if (!guestConfig) {
+    addDiscussionLog(discussion.id, 'error', '嘉宾', `模型 ${guestModel} 未配置`);
     throw new Error(`嘉宾模型 ${guestModel} 未配置`);
   }
   
   let modelDisplayName = getModelDisplayName(guestConfig.provider);
+  
+  addDiscussionLog(discussion.id, 'info', '嘉宾', `准备调用嘉宾模型: ${modelDisplayName}`, {
+    provider: guestConfig.provider,
+    hasApiKey: !!guestConfig.apiKey,
+  });
+  
   const chatHistory = buildChatHistory(messages, 'guest', modelDisplayName);
   
+  addDiscussionLog(discussion.id, 'info', '嘉宾', `发送 API 请求...`, {
+    messageCount: chatHistory.length,
+  });
+  
+  const startTime = Date.now();
   const result = await callAIModel(guestConfig, {
     messages: chatHistory,
     temperature: 0.8,
+  });
+  const responseTime = Date.now() - startTime;
+  
+  addDiscussionLog(discussion.id, 'info', '嘉宾', `收到响应，耗时 ${responseTime}ms`, {
+    responseTime,
+    contentLength: result.content.length,
+    fallbackUsed: result.fallbackUsed,
   });
   
   // 如果回退到内置模型，更新显示名称
   if (result.fallbackUsed) {
     modelDisplayName = `内置模型 (Manus)`;
-    console.log(`[嘉宾] 回退到内置模型，原因: ${result.originalError}`);
+    addDiscussionLog(discussion.id, 'warn', '嘉宾', `回退到内置模型`, {
+      originalError: result.originalError,
+    });
+  } else {
+    addDiscussionLog(discussion.id, 'info', '嘉宾', `成功使用模型: ${modelDisplayName}`);
   }
   
   // 保存消息

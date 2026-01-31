@@ -72,3 +72,12 @@
 ## Claude API 修复
 - [x] 修复 Claude 模型名称 claude-3-5-sonnet-20241022 返回 404 错误
 - [x] 更新为最新的 Claude 4.5 模型名称 (claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-5)
+
+## 实时日志模块
+- [x] 在讨论页面配置面板下方添加日志显示区域
+- [x] 显示 API 调用过程、请求/响应信息
+- [x] 显示错误信息和调试信息
+- [x] 支持日志实时更新
+
+## 当前待修复
+- [x] 修复 API Key 删除失败问题 (Failed to fetch) - 后端功能正常，问题可能出在用户本地网络配置
