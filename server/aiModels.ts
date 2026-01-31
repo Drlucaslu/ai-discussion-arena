@@ -45,7 +45,7 @@ const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: stri
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
   },
   claude: {
-    defaultModel: 'claude-3-5-sonnet-20241022',
+    defaultModel: 'claude-sonnet-4-5',
     baseUrl: 'https://api.anthropic.com/v1',
   },
   deepseek: {
@@ -64,8 +64,10 @@ export const SUPPORTED_MODELS = [
   { provider: 'openai' as const, name: 'OpenAI GPT-4o-mini', model: 'gpt-4o-mini' },
   { provider: 'gemini' as const, name: 'Google Gemini 1.5 Pro', model: 'gemini-1.5-pro' },
   { provider: 'gemini' as const, name: 'Google Gemini 1.5 Flash', model: 'gemini-1.5-flash' },
-  { provider: 'claude' as const, name: 'Anthropic Claude 3.5 Sonnet', model: 'claude-3-5-sonnet-20241022' },
-  { provider: 'claude' as const, name: 'Anthropic Claude 3.5 Haiku', model: 'claude-3-5-haiku-20241022' },
+  { provider: 'claude' as const, name: 'Anthropic Claude Sonnet 4.5', model: 'claude-sonnet-4-5' },
+  { provider: 'claude' as const, name: 'Anthropic Claude Haiku 4.5', model: 'claude-haiku-4-5' },
+  { provider: 'claude' as const, name: 'Anthropic Claude Opus 4.5', model: 'claude-opus-4-5' },
+  { provider: 'claude' as const, name: 'Anthropic Claude Sonnet 3.7', model: 'claude-3-7-sonnet-latest' },
   { provider: 'deepseek' as const, name: 'DeepSeek Chat', model: 'deepseek-chat' },
   { provider: 'deepseek' as const, name: 'DeepSeek Reasoner', model: 'deepseek-reasoner' },
   { provider: 'builtin' as const, name: '内置模型 (Manus)', model: 'builtin' },

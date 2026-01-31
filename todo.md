@@ -68,3 +68,7 @@
 ## 依赖问题修复
 - [x] 修复 @builder.io/vite-plugin-jsx-loc 与 Vite 7.x 的版本冲突（已移除该插件）
 - [x] 移除 vite-plugin-manus-runtime 平台特有插件
+
+## Claude API 修复
+- [x] 修复 Claude 模型名称 claude-3-5-sonnet-20241022 返回 404 错误
+- [x] 更新为最新的 Claude 4.5 模型名称 (claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-5)
