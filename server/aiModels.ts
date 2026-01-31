@@ -242,23 +242,60 @@ async function callBuiltinLLM(
 
 /**
  * 统一的 AI 模型调用接口
+ * 支持自动回退到内置模型
  */
 export async function callAIModel(
   config: ModelConfig,
-  options: ChatCompletionOptions
-): Promise<ChatCompletionResult> {
-  switch (config.provider) {
-    case 'openai':
-    case 'deepseek':
-      return callOpenAICompatible(config, options);
-    case 'gemini':
-      return callGemini(config, options);
-    case 'claude':
-      return callClaude(config, options);
-    case 'builtin':
-      return callBuiltinLLM(options);
-    default:
-      throw new Error(`不支持的模型提供商: ${config.provider}`);
+  options: ChatCompletionOptions,
+  enableFallback: boolean = true
+): Promise<ChatCompletionResult & { fallbackUsed?: boolean; originalError?: string }> {
+  // 如果是内置模型，直接调用
+  if (config.provider === 'builtin') {
+    return callBuiltinLLM(options);
+  }
+
+  // 外部模型调用，包装错误处理和回退逻辑
+  try {
+    let result: ChatCompletionResult;
+    
+    switch (config.provider) {
+      case 'openai':
+      case 'deepseek':
+        result = await callOpenAICompatible(config, options);
+        break;
+      case 'gemini':
+        result = await callGemini(config, options);
+        break;
+      case 'claude':
+        result = await callClaude(config, options);
+        break;
+      default:
+        throw new Error(`不支持的模型提供商: ${config.provider}`);
+    }
+    
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[AI Model] ${config.provider} 调用失败:`, errorMessage);
+    
+    // 如果启用了回退机制，尝试使用内置模型
+    if (enableFallback) {
+      console.log(`[AI Model] 回退到内置模型...`);
+      try {
+        const fallbackResult = await callBuiltinLLM(options);
+        return {
+          ...fallbackResult,
+          fallbackUsed: true,
+          originalError: errorMessage,
+        };
+      } catch (fallbackError) {
+        // 内置模型也失败了，抛出原始错误
+        throw new Error(`执行失败: ${errorMessage}（回退也失败）`);
+      }
+    }
+    
+    // 不启用回退，直接抛出错误
+    throw new Error(`执行失败: ${errorMessage}`);
   }
 }
 

@@ -147,11 +147,18 @@ export async function invokeJudge(
     temperature: 0.7,
   });
   
+  // 确定实际使用的模型名称
+  let modelName = getModelDisplayName(judgeConfig.provider);
+  if (result.fallbackUsed) {
+    modelName = `内置模型 (Manus)`;
+    console.log(`[裁判] 回退到内置模型，原因: ${result.originalError}`);
+  }
+  
   // 保存消息
   const message = await createMessage({
     discussionId: discussion.id,
     role: 'judge',
-    modelName: getModelDisplayName(judgeConfig.provider),
+    modelName,
     content: result.content,
   });
   
@@ -197,13 +204,19 @@ export async function invokeGuest(
     throw new Error(`嘉宾模型 ${guestModel} 未配置`);
   }
   
-  const modelDisplayName = getModelDisplayName(guestConfig.provider);
+  let modelDisplayName = getModelDisplayName(guestConfig.provider);
   const chatHistory = buildChatHistory(messages, 'guest', modelDisplayName);
   
   const result = await callAIModel(guestConfig, {
     messages: chatHistory,
     temperature: 0.8,
   });
+  
+  // 如果回退到内置模型，更新显示名称
+  if (result.fallbackUsed) {
+    modelDisplayName = `内置模型 (Manus)`;
+    console.log(`[嘉宾] 回退到内置模型，原因: ${result.originalError}`);
+  }
   
   // 保存消息
   const message = await createMessage({
