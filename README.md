@@ -42,6 +42,49 @@ pnpm run build
 npm run build
 ```
 
+### 方式三：Docker 快速启动
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/Drlucaslu/ai-discussion-arena.git
+cd ai-discussion-arena
+
+# 2. 构建 Docker 镜像
+docker build -t ai-discussion-arena .
+
+# 3. 运行容器
+docker run -d \
+  -p 7788:7788 \
+  -v $(pwd)/data:/app/data \
+  --name ai-arena \
+  ai-discussion-arena
+
+# 访问应用
+# 在浏览器中打开 http://localhost:7788
+```
+
+**Docker 常用命令：**
+
+```bash
+# 停止容器
+docker stop ai-arena
+
+# 启动容器
+docker start ai-arena
+
+# 查看日志
+docker logs -f ai-arena
+
+# 删除容器
+docker rm -f ai-arena
+```
+
+使用 Docker 的优势：
+- ✅ 无需安装 Node.js 和 pnpm
+- ✅ 环境隔离，避免依赖冲突
+- ✅ 一键部署，开箱即用
+- ✅ 数据持久化（通过 volume 挂载）
+
 ## 使用方法
 
 ### 启动服务
