@@ -126,16 +126,16 @@ export function clearDiscussionLogs(discussionId: number): void {
  */
 function parseConfidenceScores(content: string): Record<string, number> | null {
   const scores: Record<string, number> = {};
-  
-  // 匹配置信度评分部分
-  const scoreMatch = content.match(/【置信度评分】([\s\S]*?)(?:【|$)/);
+
+  // 匹配置信度评分部分（支持多种格式）
+  const scoreMatch = content.match(/(?:【置信度评分】|置信度评分[:：]?|confidence\s*scores?[:：]?)([\s\S]*?)(?:【|#{1,4}\s|\n\n)/i);
   if (!scoreMatch) return null;
-  
+
   const scoreSection = scoreMatch[1];
   const lines = scoreSection.split('\n');
-  
+
   for (const line of lines) {
-    const match = line.match(/[-•]\s*(.+?)[:：]\s*([\d.]+)/);
+    const match = line.match(/[-•*]\s*\**(.+?)\**[:：]\s*\**?([\d.]+)\**?/);
     if (match) {
       const hypothesis = match[1].trim();
       const score = parseFloat(match[2]);
@@ -144,7 +144,7 @@ function parseConfidenceScores(content: string): Record<string, number> | null {
       }
     }
   }
-  
+
   return Object.keys(scores).length > 0 ? scores : null;
 }
 
@@ -152,11 +152,36 @@ function parseConfidenceScores(content: string): Record<string, number> | null {
  * 解析最终结论
  */
 function parseFinalConclusion(content: string): string | null {
-  const conclusionMatch = content.match(/【最终结论】([\s\S]*?)$/);
-  if (conclusionMatch) {
-    return conclusionMatch[1].trim();
+  // 支持多种格式：【最终结论】、### 最终结论、### **最终裁决** 等
+  const patterns = [
+    /【最终结论】([\s\S]*?)$/,
+    /【最终裁决】([\s\S]*?)$/,
+    /#{1,4}\s*\**最终裁决\**\s*\n([\s\S]*?)$/,
+    /#{1,4}\s*\**最终结论\**\s*\n([\s\S]*?)$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
   }
   return null;
+}
+
+/**
+ * 检测裁判是否已经给出结论（宽松匹配）
+ * 当裁判的回复中包含"最终裁决"或"最终结论"相关内容时，视为讨论可以结束
+ */
+function detectVerdict(content: string): boolean {
+  const verdictPatterns = [
+    /【最终结论】/,
+    /【最终裁决】/,
+    /#{1,4}\s*\**最终裁决/,
+    /#{1,4}\s*\**最终结论/,
+    /最终裁决[:：\s]*\n/,
+  ];
+  return verdictPatterns.some(p => p.test(content));
 }
 
 /**
@@ -253,25 +278,28 @@ export async function invokeJudge(
   // 检查是否包含最终裁决
   const confidenceScores = parseConfidenceScores(result.content);
   const finalConclusion = parseFinalConclusion(result.content);
-  
-  if (confidenceScores && finalConclusion) {
+  const hasVerdict = detectVerdict(result.content);
+
+  if (hasVerdict || (confidenceScores && finalConclusion)) {
     // 更新讨论状态
     await updateDiscussion(discussion.id, {
       status: 'completed',
-      finalVerdict: finalConclusion,
-      confidenceScores,
+      finalVerdict: finalConclusion || result.content,
+      confidenceScores: confidenceScores || {},
     });
-    
+
+    addDiscussionLog(discussion.id, 'info', '裁判', '裁判已给出最终裁决，讨论结束');
+
     return {
       message,
       isComplete: true,
       verdict: {
-        conclusion: finalConclusion,
-        confidenceScores,
+        conclusion: finalConclusion || result.content,
+        confidenceScores: confidenceScores || {},
       },
     };
   }
-  
+
   return {
     message,
     isComplete: false,
@@ -375,10 +403,10 @@ export async function executeDiscussionRound(
     let judgeInstruction: string;
     if (roundNumber === 1) {
       judgeInstruction = '请开始主持这场讨论。首先介绍讨论主题，然后邀请各位嘉宾发表初始观点。';
-    } else if (roundNumber >= 5) {
-      judgeInstruction = '讨论已进行多轮，请评估是否已达成共识。如果是，请给出最终裁决和置信度评分；如果否，请继续引导讨论。';
+    } else if (roundNumber === 2) {
+      judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。如果你认为各方观点已经充分且达成共识，可以直接给出最终裁决和置信度评分。';
     } else {
-      judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。';
+      judgeInstruction = '请评估讨论是否已经充分。如果各方观点已经明确且达成共识，请给出最终裁决和置信度评分；如果还有分歧需要探讨，请继续引导讨论。';
     }
 
     const judgeResult = await invokeJudge(
