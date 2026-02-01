@@ -5,7 +5,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { 
   ArrowLeft, 
@@ -20,12 +19,11 @@ import {
   AlertCircle,
   MessageSquare,
   Terminal,
-  ChevronDown,
-  ChevronUp,
   Trash2,
   RefreshCw,
   Settings,
-  ScrollText
+  ScrollText,
+  Bug
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
@@ -73,7 +71,6 @@ export default function Discussion() {
   
   const [isRunning, setIsRunning] = useState(false);
   const [currentRound, setCurrentRound] = useState(1);
-  const [rightPanelTab, setRightPanelTab] = useState<'logs' | 'config'>('logs');
   const [autoScroll, setAutoScroll] = useState(true);
 
   // 获取讨论详情
@@ -255,7 +252,7 @@ export default function Discussion() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* 顶部导航 */}
-      <header className="border-b bg-card px-4 py-3">
+      <header className="border-b bg-card px-4 py-3 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
@@ -303,9 +300,10 @@ export default function Discussion() {
         </div>
       </header>
 
+      {/* 三栏布局主体 */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 聊天区域 */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* 左侧：聊天区域 */}
+        <div className="flex-1 flex flex-col min-w-0 border-r">
           {/* 讨论问题 */}
           <div className="p-4 bg-muted/30 border-b shrink-0">
             <div className="flex items-start gap-3">
@@ -400,203 +398,214 @@ export default function Discussion() {
           )}
         </div>
 
-        {/* 右侧面板 - 日志和配置 */}
-        <aside className="w-96 border-l bg-card hidden lg:flex lg:flex-col">
-          <Tabs value={rightPanelTab} onValueChange={(v) => setRightPanelTab(v as 'logs' | 'config')} className="flex-1 flex flex-col">
-            <TabsList className="grid w-full grid-cols-2 m-2 mb-0">
-              <TabsTrigger value="logs" className="flex items-center gap-2">
-                <Terminal className="w-4 h-4" />
-                运行日志
-                {logs && logs.length > 0 && (
-                  <Badge variant="secondary" className="text-xs ml-1">
-                    {logs.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="config" className="flex items-center gap-2">
-                <Settings className="w-4 h-4" />
-                配置
-              </TabsTrigger>
-            </TabsList>
-
-            {/* 日志面板 */}
-            <TabsContent value="logs" className="flex-1 flex flex-col m-0 mt-2 overflow-hidden">
-              {/* 日志工具栏 */}
-              <div className="px-3 pb-2 flex items-center justify-between border-b">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {isRunning && (
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                      实时更新中
-                    </span>
-                  )}
-                  {!autoScroll && logs && logs.length > 0 && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-6 text-xs"
-                      onClick={() => {
-                        setAutoScroll(true);
-                        scrollLogsToBottom();
-                      }}
-                    >
-                      <ScrollText className="w-3 h-3 mr-1" />
-                      滚动到底部
-                    </Button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-7 w-7"
-                    onClick={() => refetchLogs()}
-                    title="刷新日志"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-7 w-7"
-                    onClick={handleClearLogs}
-                    title="清除日志"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-
-              {/* 日志内容 */}
-              <div 
-                ref={logsContainerRef}
-                className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-xs"
-                onScroll={handleLogsScroll}
+        {/* 中间：Debug 日志栏 */}
+        <div className="w-80 xl:w-96 border-r bg-zinc-900/50 hidden md:flex md:flex-col">
+          {/* 日志标题栏 */}
+          <div className="px-3 py-2 border-b bg-zinc-900/80 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <Bug className="w-4 h-4 text-cyan-400" />
+              <span className="font-medium text-sm text-cyan-400">Debug 日志</span>
+              {logs && logs.length > 0 && (
+                <Badge variant="secondary" className="text-xs bg-cyan-500/20 text-cyan-400">
+                  {logs.length}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              {isRunning && (
+                <span className="flex items-center gap-1 text-xs text-green-400 mr-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  实时
+                </span>
+              )}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-6 w-6 hover:bg-zinc-800"
+                onClick={() => refetchLogs()}
+                title="刷新日志"
               >
-                {!logs || logs.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <Terminal className="w-10 h-10 mx-auto mb-3 opacity-50" />
-                    <p className="font-sans">暂无日志</p>
-                    <p className="text-xs mt-1 font-sans">开始讨论后将显示 API 调用日志</p>
-                  </div>
-                ) : (
-                  logs.map((log, index) => (
-                    <div 
-                      key={index} 
-                      className={`p-2 rounded border-l-2 ${
-                        log.level === 'error' ? 'border-red-500 bg-red-500/10' :
-                        log.level === 'warn' ? 'border-yellow-500 bg-yellow-500/10' :
-                        log.level === 'info' ? 'border-blue-500 bg-blue-500/5' :
-                        'border-gray-500 bg-gray-500/5'
+                <RefreshCw className="w-3 h-3 text-muted-foreground" />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-6 w-6 hover:bg-zinc-800"
+                onClick={handleClearLogs}
+                title="清除日志"
+              >
+                <Trash2 className="w-3 h-3 text-muted-foreground" />
+              </Button>
+            </div>
+          </div>
+
+          {/* 日志内容 */}
+          <div 
+            ref={logsContainerRef}
+            className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-xs bg-zinc-950/50"
+            onScroll={handleLogsScroll}
+          >
+            {!logs || logs.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Terminal className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                <p className="font-sans text-sm">暂无日志</p>
+                <p className="text-xs mt-1 font-sans text-zinc-500">开始讨论后将显示 API 调用日志</p>
+              </div>
+            ) : (
+              logs.map((log, index) => (
+                <div 
+                  key={index} 
+                  className={`p-2 rounded border-l-2 ${
+                    log.level === 'error' ? 'border-red-500 bg-red-500/10' :
+                    log.level === 'warn' ? 'border-yellow-500 bg-yellow-500/10' :
+                    log.level === 'info' ? 'border-cyan-500 bg-cyan-500/5' :
+                    'border-zinc-600 bg-zinc-800/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-zinc-500 text-[10px]">
+                      {formatTimestamp(log.timestamp)}
+                    </span>
+                    <Badge 
+                      variant="outline" 
+                      className={`text-[10px] px-1 py-0 h-4 border-0 ${
+                        log.level === 'error' ? 'bg-red-500/20 text-red-400' :
+                        log.level === 'warn' ? 'bg-yellow-500/20 text-yellow-400' :
+                        log.level === 'info' ? 'bg-cyan-500/20 text-cyan-400' :
+                        'bg-zinc-700/50 text-zinc-400'
                       }`}
                     >
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="text-muted-foreground text-[10px]">
-                          {formatTimestamp(log.timestamp)}
-                        </span>
-                        <Badge 
-                          variant="outline" 
-                          className={`text-[10px] px-1 py-0 h-4 ${LOG_LEVEL_COLORS[log.level]}`}
-                        >
-                          {LOG_LEVEL_LABELS[log.level]}
-                        </Badge>
-                        <span className="text-muted-foreground text-[10px]">
-                          [{log.source}]
-                        </span>
-                      </div>
-                      <p className={`${LOG_LEVEL_COLORS[log.level]} break-words leading-relaxed`}>
-                        {log.message}
-                      </p>
-                      {log.details && Object.keys(log.details).length > 0 && (
-                        <details className="mt-1.5">
-                          <summary className="text-muted-foreground cursor-pointer hover:text-foreground text-[10px]">
-                            查看详情
-                          </summary>
-                          <pre className="mt-1 p-1.5 bg-background rounded text-[10px] overflow-x-auto whitespace-pre-wrap">
-                            {JSON.stringify(log.details, null, 2)}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </TabsContent>
-
-            {/* 配置面板 */}
-            <TabsContent value="config" className="flex-1 overflow-y-auto m-0 mt-2">
-              <div className="p-4 space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">嘉宾模型</p>
-                  <div className="flex flex-wrap gap-1">
-                    {discussion.guestModels.map((model, index) => (
-                      <Badge key={index} variant="secondary">{model}</Badge>
-                    ))}
+                      {LOG_LEVEL_LABELS[log.level]}
+                    </Badge>
+                    <span className="text-zinc-500 text-[10px]">
+                      [{log.source}]
+                    </span>
                   </div>
+                  <p className={`break-words leading-relaxed ${
+                    log.level === 'error' ? 'text-red-300' :
+                    log.level === 'warn' ? 'text-yellow-300' :
+                    log.level === 'info' ? 'text-cyan-300' :
+                    'text-zinc-400'
+                  }`}>
+                    {log.message}
+                  </p>
+                  {log.details && Object.keys(log.details).length > 0 && (
+                    <details className="mt-1.5">
+                      <summary className="text-zinc-500 cursor-pointer hover:text-zinc-300 text-[10px]">
+                        查看详情
+                      </summary>
+                      <pre className="mt-1 p-1.5 bg-zinc-900 rounded text-[10px] overflow-x-auto whitespace-pre-wrap text-zinc-400">
+                        {JSON.stringify(log.details, null, 2)}
+                      </pre>
+                    </details>
+                  )}
                 </div>
+              ))
+            )}
+          </div>
 
-                <Separator />
+          {/* 滚动到底部按钮 */}
+          {!autoScroll && logs && logs.length > 0 && (
+            <div className="p-2 border-t bg-zinc-900/80 shrink-0">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full h-7 text-xs bg-zinc-800 border-zinc-700 hover:bg-zinc-700"
+                onClick={() => {
+                  setAutoScroll(true);
+                  scrollLogsToBottom();
+                }}
+              >
+                <ScrollText className="w-3 h-3 mr-1" />
+                滚动到底部
+              </Button>
+            </div>
+          )}
+        </div>
 
+        {/* 右侧：配置面板 */}
+        <aside className="w-64 bg-card hidden lg:flex lg:flex-col">
+          {/* 配置标题 */}
+          <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
+            <Settings className="w-4 h-4 text-muted-foreground" />
+            <span className="font-medium text-sm">讨论配置</span>
+          </div>
+
+          {/* 配置内容 */}
+          <ScrollArea className="flex-1">
+            <div className="p-4 space-y-4">
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">嘉宾模型</p>
+                <div className="flex flex-wrap gap-1">
+                  {discussion.guestModels.map((model, index) => (
+                    <Badge key={index} variant="secondary" className="text-xs">{model}</Badge>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">裁判模型</p>
+                <Badge className="text-xs">{discussion.judgeModel}</Badge>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">置信度阈值</p>
+                <p className="font-medium text-sm">{discussion.confidenceThreshold}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">动态 Agent</p>
+                <Badge variant={discussion.enableDynamicAgent ? 'default' : 'secondary'} className="text-xs">
+                  {discussion.enableDynamicAgent ? '已启用' : '已禁用'}
+                </Badge>
+              </div>
+
+              {discussion.enableDynamicAgent && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-2">裁判模型</p>
-                  <Badge>{discussion.judgeModel}</Badge>
+                  <p className="text-sm text-muted-foreground mb-2">数据读取上限</p>
+                  <p className="font-medium text-sm">{discussion.dataReadLimit} 条</p>
                 </div>
+              )}
 
-                <Separator />
-
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">置信度阈值</p>
-                  <p className="font-medium">{discussion.confidenceThreshold}</p>
-                </div>
-
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">动态 Agent</p>
-                  <p className="font-medium">{discussion.enableDynamicAgent ? '已启用' : '已禁用'}</p>
-                </div>
-
-                {discussion.enableDynamicAgent && (
+              {/* 最终裁决 */}
+              {discussion.status === 'completed' && discussion.finalVerdict && (
+                <>
+                  <Separator />
                   <div>
-                    <p className="text-sm text-muted-foreground mb-2">数据读取上限</p>
-                    <p className="font-medium">{discussion.dataReadLimit} 条</p>
-                  </div>
-                )}
-
-                {/* 最终裁决 */}
-                {discussion.status === 'completed' && discussion.finalVerdict && (
-                  <>
-                    <Separator />
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        <p className="text-sm font-medium">最终裁决</p>
-                      </div>
-                      <Card>
-                        <CardContent className="p-3 text-sm">
-                          <Streamdown>{discussion.finalVerdict}</Streamdown>
-                        </CardContent>
-                      </Card>
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      <p className="text-sm font-medium">最终裁决</p>
                     </div>
+                    <Card>
+                      <CardContent className="p-3 text-sm">
+                        <Streamdown>{discussion.finalVerdict}</Streamdown>
+                      </CardContent>
+                    </Card>
+                  </div>
 
-                    {discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium mb-2">置信度评分</p>
-                        <div className="space-y-2">
-                          {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
-                            <div key={hypothesis} className="flex items-center justify-between text-sm">
-                              <span className="truncate flex-1 mr-2">{hypothesis}</span>
-                              <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'}>
-                                {(score as number).toFixed(2)}
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
+                  {discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium mb-2">置信度评分</p>
+                      <div className="space-y-2">
+                        {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
+                          <div key={hypothesis} className="flex items-center justify-between text-sm">
+                            <span className="truncate flex-1 mr-2 text-xs">{hypothesis}</span>
+                            <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'} className="text-xs">
+                              {(score as number).toFixed(2)}
+                            </Badge>
+                          </div>
+                        ))}
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </ScrollArea>
         </aside>
       </div>
     </div>
