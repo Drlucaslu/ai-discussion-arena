@@ -1,5 +1,5 @@
-# Use Node.js LTS as base image
-FROM node:18-alpine
+# Use Node.js 20 as base image (Vite requires 20.19+ or 22.12+)
+FROM node:20-alpine
 
 # Install pnpm
 RUN npm install -g pnpm@latest
@@ -11,7 +11,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 # Copy application source
 COPY . .
