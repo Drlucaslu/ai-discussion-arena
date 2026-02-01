@@ -35,6 +35,32 @@ const MODEL_PROVIDERS = [
   { id: 'deepseek', name: 'DeepSeek', placeholder: 'sk-...' },
 ];
 
+// 各提供商支持的模型列表
+const PROVIDER_MODELS: Record<string, { id: string; name: string }[]> = {
+  openai: [
+    { id: 'gpt-4o', name: 'GPT-4o' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+  ],
+  gemini: [
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (推荐)' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+    { id: 'gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro' },
+    { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash' },
+  ],
+  claude: [
+    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+    { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet' },
+  ],
+  deepseek: [
+    { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+  ],
+};
+
 export default function Settings() {
   const [, navigate] = useLocation();
   const { isAuthenticated, loading: authLoading } = useAuth();
@@ -42,6 +68,7 @@ export default function Settings() {
   // 新配置表单
   const [newConfig, setNewConfig] = useState({
     modelProvider: '',
+    modelName: '',
     apiKey: '',
     baseUrl: '',
   });
@@ -81,7 +108,7 @@ export default function Settings() {
   const saveConfigMutation = trpc.modelConfig.save.useMutation({
     onSuccess: () => {
       toast.success('API Key 保存成功');
-      setNewConfig({ modelProvider: '', apiKey: '', baseUrl: '' });
+      setNewConfig({ modelProvider: '', modelName: '', apiKey: '', baseUrl: '' });
       setTestLogs([]);
       setTestResult(null);
       refetchConfigs();
@@ -158,9 +185,24 @@ export default function Settings() {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [testLogs]);
 
+  // 当选择提供商时，自动选择第一个模型
+  useEffect(() => {
+    if (newConfig.modelProvider && PROVIDER_MODELS[newConfig.modelProvider]) {
+      const models = PROVIDER_MODELS[newConfig.modelProvider];
+      if (models.length > 0 && !newConfig.modelName) {
+        setNewConfig(prev => ({ ...prev, modelName: models[0].id }));
+      }
+    }
+  }, [newConfig.modelProvider]);
+
   const handleTestApiKey = () => {
     if (!newConfig.modelProvider || !newConfig.apiKey) {
       toast.error('请选择模型提供商并输入 API Key');
+      return;
+    }
+    
+    if (!newConfig.modelName) {
+      toast.error('请选择具体的模型');
       return;
     }
     
@@ -172,12 +214,18 @@ export default function Settings() {
       provider: newConfig.modelProvider,
       apiKey: newConfig.apiKey,
       baseUrl: newConfig.baseUrl || undefined,
+      modelName: newConfig.modelName,
     });
   };
 
   const handleSaveConfig = () => {
     if (!newConfig.modelProvider || !newConfig.apiKey) {
       toast.error('请选择模型提供商并输入 API Key');
+      return;
+    }
+    
+    if (!newConfig.modelName) {
+      toast.error('请选择具体的模型');
       return;
     }
     
@@ -188,6 +236,7 @@ export default function Settings() {
     
     saveConfigMutation.mutate({
       modelProvider: newConfig.modelProvider,
+      modelName: newConfig.modelName,
       apiKey: newConfig.apiKey,
       baseUrl: newConfig.baseUrl || undefined,
       isEnabled: true,
@@ -257,7 +306,11 @@ export default function Settings() {
                     <Select
                       value={newConfig.modelProvider}
                       onValueChange={(value) => {
-                        setNewConfig(prev => ({ ...prev, modelProvider: value }));
+                        setNewConfig(prev => ({ 
+                          ...prev, 
+                          modelProvider: value,
+                          modelName: PROVIDER_MODELS[value]?.[0]?.id || ''
+                        }));
                         setTestLogs([]);
                         setTestResult(null);
                       }}
@@ -281,17 +334,40 @@ export default function Settings() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>API Key</Label>
-                    <Input
-                      type="password"
-                      placeholder={MODEL_PROVIDERS.find(p => p.id === newConfig.modelProvider)?.placeholder || '输入 API Key'}
-                      value={newConfig.apiKey}
-                      onChange={(e) => {
-                        setNewConfig(prev => ({ ...prev, apiKey: e.target.value }));
+                    <Label>具体模型</Label>
+                    <Select
+                      value={newConfig.modelName}
+                      onValueChange={(value) => {
+                        setNewConfig(prev => ({ ...prev, modelName: value }));
                         setTestResult(null);
                       }}
-                    />
+                      disabled={!newConfig.modelProvider}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择模型" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(PROVIDER_MODELS[newConfig.modelProvider] || []).map((model) => (
+                          <SelectItem key={model.id} value={model.id}>
+                            {model.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>API Key</Label>
+                  <Input
+                    type="password"
+                    placeholder={MODEL_PROVIDERS.find(p => p.id === newConfig.modelProvider)?.placeholder || '输入 API Key'}
+                    value={newConfig.apiKey}
+                    onChange={(e) => {
+                      setNewConfig(prev => ({ ...prev, apiKey: e.target.value }));
+                      setTestResult(null);
+                    }}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -358,8 +434,8 @@ export default function Settings() {
                 <div className="flex gap-2">
                   <Button 
                     variant="outline" 
-                    onClick={handleTestApiKey} 
-                    disabled={isTesting || !newConfig.modelProvider || !newConfig.apiKey}
+                    onClick={handleTestApiKey}
+                    disabled={!newConfig.modelProvider || !newConfig.apiKey || !newConfig.modelName || isTesting}
                   >
                     {isTesting ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -368,17 +444,16 @@ export default function Settings() {
                     )}
                     测试连接
                   </Button>
-                  
                   <Button 
-                    onClick={handleSaveConfig} 
-                    disabled={saveConfigMutation.isPending || !newConfig.modelProvider || !newConfig.apiKey}
+                    onClick={handleSaveConfig}
+                    disabled={!newConfig.modelProvider || !newConfig.apiKey || !newConfig.modelName || saveConfigMutation.isPending}
                   >
                     {saveConfigMutation.isPending ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     ) : (
                       <Plus className="w-4 h-4 mr-2" />
                     )}
-                    {testResult?.success ? '保存配置' : '跳过测试并保存'}
+                    保存配置
                   </Button>
                 </div>
               </CardContent>
@@ -398,58 +473,45 @@ export default function Settings() {
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : modelConfigs?.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    暂未配置任何 API Key
-                  </p>
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Key className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>暂无配置</p>
+                    <p className="text-sm">添加 API Key 以开始使用外部 AI 模型</p>
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     {modelConfigs?.map((config) => (
-                      <div
-                        key={config.id}
-                        className="flex items-center justify-between p-3 border rounded-lg"
+                      <div 
+                        key={config.id} 
+                        className="flex items-center justify-between p-3 rounded-lg border bg-card"
                       >
                         <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${config.isEnabled ? 'bg-green-500/10' : 'bg-muted'}`}>
-                            {config.isEnabled ? (
-                              <CheckCircle2 className="w-5 h-5 text-green-500" />
-                            ) : (
-                              <XCircle className="w-5 h-5 text-muted-foreground" />
-                            )}
-                          </div>
+                          <div className={`w-2 h-2 rounded-full ${config.isEnabled ? 'bg-green-500' : 'bg-gray-400'}`} />
                           <div>
                             <p className="font-medium">
                               {MODEL_PROVIDERS.find(p => p.id === config.modelProvider)?.name || config.modelProvider}
                             </p>
-                            <p className="text-sm text-muted-foreground font-mono">
-                              {config.apiKey}
+                            <p className="text-xs text-muted-foreground">
+                              模型: {config.modelName || '默认'} · API Key: {config.apiKey.slice(0, 8)}...{config.apiKey.slice(-4)}
                             </p>
                           </div>
                         </div>
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            if (confirm('确定要删除这个配置吗？')) {
-                              deleteConfigMutation.mutate({ id: config.id });
-                            }
-                          }}
+                          onClick={() => deleteConfigMutation.mutate({ id: config.id })}
+                          disabled={deleteConfigMutation.isPending}
                         >
-                          <Trash2 className="w-4 h-4 text-destructive" />
+                          {deleteConfigMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          )}
                         </Button>
                       </div>
                     ))}
                   </div>
                 )}
-
-                {/* 内置模型提示 */}
-                <div className="mt-4 p-3 bg-muted/50 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">内置模型</Badge>
-                    <span className="text-sm text-muted-foreground">
-                      无需配置，可直接使用
-                    </span>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -458,12 +520,12 @@ export default function Settings() {
           <TabsContent value="defaults" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">讨论默认配置</CardTitle>
+                <CardTitle className="text-lg">默认讨论配置</CardTitle>
                 <CardDescription>
-                  设置新建讨论时的默认参数
+                  设置创建新讨论时的默认参数
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>默认裁判模型</Label>
                   <Select
@@ -475,9 +537,10 @@ export default function Settings() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="builtin">内置模型 (Manus)</SelectItem>
-                      {MODEL_PROVIDERS.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {provider.name}
+                      {modelConfigs?.filter(c => c.isEnabled).map((config) => (
+                        <SelectItem key={config.id} value={config.modelProvider}>
+                          {MODEL_PROVIDERS.find(p => p.id === config.modelProvider)?.name || config.modelProvider}
+                          {config.modelName && ` (${config.modelName})`}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -486,7 +549,7 @@ export default function Settings() {
 
                 <div className="space-y-2">
                   <Label>默认置信度阈值: {userSettingsForm.defaultConfidenceThreshold}</Label>
-                  <Input
+                  <input
                     type="range"
                     min="0"
                     max="1"
@@ -496,16 +559,14 @@ export default function Settings() {
                       ...prev, 
                       defaultConfidenceThreshold: parseFloat(e.target.value) 
                     }))}
-                    className="cursor-pointer"
+                    className="w-full"
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
+                  <div>
                     <Label>默认启用动态 Agent</Label>
-                    <p className="text-xs text-muted-foreground">
-                      允许 AI 生成代码查询数据库
-                    </p>
+                    <p className="text-xs text-muted-foreground">允许 AI 搜索和读取外部数据</p>
                   </div>
                   <Switch
                     checked={userSettingsForm.defaultEnableDynamicAgent}
@@ -531,40 +592,6 @@ export default function Settings() {
                 </div>
 
                 <Separator />
-
-                <div className="space-y-4">
-                  <h4 className="font-medium">企业数据对接</h4>
-                  
-                  <div className="space-y-2">
-                    <Label>企业 API 地址</Label>
-                    <Input
-                      placeholder="https://api.yourcompany.com/data"
-                      value={userSettingsForm.enterpriseApiUrl}
-                      onChange={(e) => setUserSettingsForm(prev => ({ 
-                        ...prev, 
-                        enterpriseApiUrl: e.target.value 
-                      }))}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>企业 API Key</Label>
-                    <Input
-                      type="password"
-                      placeholder="输入企业 API Key"
-                      value={userSettingsForm.enterpriseApiKey}
-                      onChange={(e) => setUserSettingsForm(prev => ({ 
-                        ...prev, 
-                        enterpriseApiKey: e.target.value 
-                      }))}
-                    />
-                    {userSettings?.enterpriseApiKey && (
-                      <p className="text-xs text-muted-foreground">
-                        当前已配置: {userSettings.enterpriseApiKey}
-                      </p>
-                    )}
-                  </div>
-                </div>
 
                 <Button onClick={handleSaveSettings} disabled={saveSettingsMutation.isPending}>
                   {saveSettingsMutation.isPending ? (

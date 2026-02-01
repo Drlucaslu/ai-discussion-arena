@@ -84,6 +84,7 @@ function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS modelConfigs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       modelProvider TEXT NOT NULL UNIQUE,
+      modelName TEXT,
       apiKey TEXT NOT NULL,
       baseUrl TEXT,
       isEnabled INTEGER DEFAULT 1 NOT NULL,
@@ -91,6 +92,13 @@ function initializeDatabase() {
       updatedAt INTEGER NOT NULL
     )
   `);
+  
+  // 迁移：添加 modelName 字段（如果不存在）
+  try {
+    _sqlite.exec(`ALTER TABLE modelConfigs ADD COLUMN modelName TEXT`);
+  } catch (e) {
+    // 字段已存在，忽略错误
+  }
   
   // 创建设置表
   _sqlite.exec(`
@@ -192,7 +200,8 @@ export function upsertModelConfig(data: Omit<InsertModelConfig, 'id' | 'createdA
     db.update(modelConfigs)
       .set({ 
         apiKey: data.apiKey, 
-        baseUrl: data.baseUrl, 
+        baseUrl: data.baseUrl,
+        modelName: data.modelName,
         isEnabled: data.isEnabled,
         updatedAt: now,
       })

@@ -38,6 +38,7 @@ function getModelConfigsMap(): Map<string, ModelConfig> {
         provider: config.modelProvider as ModelProvider,
         apiKey: config.apiKey,
         baseUrl: config.baseUrl || undefined,
+        model: config.modelName || undefined, // 包含用户选择的具体模型
       });
     }
   }
@@ -305,6 +306,7 @@ export const appRouter = router({
     save: publicProcedure
       .input(z.object({
         modelProvider: z.string(),
+        modelName: z.string().optional(),
         apiKey: z.string(),
         baseUrl: z.string().optional(),
         isEnabled: z.boolean().default(true),
@@ -331,12 +333,14 @@ export const appRouter = router({
         provider: z.string(),
         apiKey: z.string(),
         baseUrl: z.string().optional(),
+        modelName: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
         const result = await testApiKey({
           provider: input.provider as ModelProvider,
           apiKey: input.apiKey,
           baseUrl: input.baseUrl,
+          model: input.modelName,
         });
         return result;
       }),

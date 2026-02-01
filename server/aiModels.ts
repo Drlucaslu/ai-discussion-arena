@@ -9,6 +9,7 @@ export interface ModelConfig {
   provider: ModelProvider;
   apiKey?: string;
   baseUrl?: string;
+  model?: string; // 具体的模型名称，如 gemini-2.5-flash
 }
 
 export interface ChatMessage {
@@ -83,7 +84,8 @@ async function callOpenAICompatible(
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResult> {
   const baseUrl = config.baseUrl || MODEL_CONFIGS[config.provider].baseUrl;
-  const model = options.model || MODEL_CONFIGS[config.provider].defaultModel;
+  // 优先使用 config.model，其次是 options.model，最后是默认模型
+  const model = config.model || options.model || MODEL_CONFIGS[config.provider].defaultModel;
   
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
@@ -124,7 +126,8 @@ async function callGemini(
   config: ModelConfig,
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResult> {
-  const model = options.model || MODEL_CONFIGS.gemini.defaultModel;
+  // 优先使用 config.model，其次是 options.model，最后是默认模型
+  const model = config.model || options.model || MODEL_CONFIGS.gemini.defaultModel;
   const baseUrl = config.baseUrl || MODEL_CONFIGS.gemini.baseUrl;
   
   // 转换消息格式为 Gemini 格式
@@ -180,7 +183,8 @@ async function callClaude(
   config: ModelConfig,
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResult> {
-  const model = options.model || MODEL_CONFIGS.claude.defaultModel;
+  // 优先使用 config.model，其次是 options.model，最后是默认模型
+  const model = config.model || options.model || MODEL_CONFIGS.claude.defaultModel;
   const baseUrl = config.baseUrl || MODEL_CONFIGS.claude.baseUrl;
   
   // 提取系统消息
@@ -361,7 +365,8 @@ export async function testApiKey(
   const startTime = Date.now();
   
   const provider = config.provider;
-  const model = MODEL_CONFIGS[provider]?.defaultModel || 'unknown';
+  // 优先使用用户指定的模型，否则使用默认模型
+  const model = config.model || MODEL_CONFIGS[provider]?.defaultModel || 'unknown';
   
   logs.push(`[${new Date().toISOString()}] 开始测试 ${provider} API...`);
   logs.push(`[${new Date().toISOString()}] 目标模型: ${model}`);

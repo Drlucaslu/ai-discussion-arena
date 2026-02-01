@@ -51,6 +51,7 @@ export type InsertMessage = typeof messages.$inferInsert;
 export const modelConfigs = sqliteTable("modelConfigs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   modelProvider: text("modelProvider").notNull(),
+  modelName: text("modelName"), // 具体的模型名称，如 gemini-2.5-flash
   apiKey: text("apiKey").notNull(),
   baseUrl: text("baseUrl"),
   isEnabled: integer("isEnabled", { mode: "boolean" }).default(true).notNull(),
