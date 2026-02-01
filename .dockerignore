@@ -1,0 +1,17 @@
+node_modules
+dist
+data
+*.log
+.git
+.github
+.vscode
+.idea
+*.md
+!README.md
+.env
+.DS_Store
+coverage
+*.test.ts
+*.test.tsx
+test_results.md
+todo.md
