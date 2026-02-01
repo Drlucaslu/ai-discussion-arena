@@ -3,7 +3,7 @@
  * 支持 OpenAI, Gemini, Claude, DeepSeek 等模型
  */
 
-export type ModelProvider = 'openai' | 'gemini' | 'claude' | 'deepseek' | 'builtin';
+export type ModelProvider = 'openai' | 'gemini' | 'claude' | 'deepseek';
 
 export interface ModelConfig {
   provider: ModelProvider;
@@ -53,10 +53,6 @@ const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: stri
     defaultModel: 'deepseek-chat',
     baseUrl: 'https://api.deepseek.com/v1',
   },
-  builtin: {
-    defaultModel: 'default',
-    baseUrl: '',
-  },
 };
 
 // 支持的模型列表（用于前端展示）
@@ -65,15 +61,12 @@ export const SUPPORTED_MODELS = [
   { provider: 'openai' as const, name: 'OpenAI GPT-4o-mini', model: 'gpt-4o-mini' },
   { provider: 'gemini' as const, name: 'Google Gemini 2.5 Flash', model: 'gemini-2.5-flash' },
   { provider: 'gemini' as const, name: 'Google Gemini 2.5 Pro', model: 'gemini-2.5-pro' },
-  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Pro', model: 'gemini-1.5-pro-latest' },
-  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Flash', model: 'gemini-1.5-flash-latest' },
   { provider: 'claude' as const, name: 'Anthropic Claude Sonnet 4.5', model: 'claude-sonnet-4-5' },
   { provider: 'claude' as const, name: 'Anthropic Claude Haiku 4.5', model: 'claude-haiku-4-5' },
   { provider: 'claude' as const, name: 'Anthropic Claude Opus 4.5', model: 'claude-opus-4-5' },
   { provider: 'claude' as const, name: 'Anthropic Claude Sonnet 3.7', model: 'claude-3-7-sonnet-latest' },
   { provider: 'deepseek' as const, name: 'DeepSeek Chat', model: 'deepseek-chat' },
   { provider: 'deepseek' as const, name: 'DeepSeek Reasoner', model: 'deepseek-reasoner' },
-  { provider: 'builtin' as const, name: '内置模型 (Manus)', model: 'builtin' },
 ];
 
 /**
@@ -227,106 +220,32 @@ async function callClaude(
 }
 
 /**
- * 调用内置 LLM（使用 Manus 提供的 API）
- * 注意：内置模型仅在 Manus 平台上可用，本地部署时需要配置外部 API Key
- */
-async function callBuiltinLLM(
-  options: ChatCompletionOptions
-): Promise<ChatCompletionResult> {
-  // 检查内置 API 是否可用
-  const forgeApiKey = process.env.BUILT_IN_FORGE_API_KEY;
-  if (!forgeApiKey || forgeApiKey.trim() === '') {
-    throw new Error(
-      '内置模型仅在 Manus 平台上可用。\n' +
-      '本地部署时，请在设置页面配置外部 API Key（如 OpenAI、DeepSeek 等），\n' +
-      '然后在创建讨论时选择对应的模型。'
-    );
-  }
-  
-  // 动态导入内置 LLM
-  const { invokeLLM } = await import('./_core/llm');
-  
-  const response = await invokeLLM({
-    messages: options.messages,
-  });
-
-  const messageContent = response.choices[0]?.message?.content;
-  const content = typeof messageContent === 'string' ? messageContent : '';
-
-  return {
-    content,
-    model: 'builtin',
-  };
-}
-
-/**
  * 统一的 AI 模型调用接口
- * 支持自动回退到内置模型
  */
 export async function callAIModel(
   config: ModelConfig,
-  options: ChatCompletionOptions,
-  enableFallback: boolean = true
-): Promise<ChatCompletionResult & { fallbackUsed?: boolean; originalError?: string }> {
-  // 如果是内置模型，直接调用
-  if (config.provider === 'builtin') {
-    return callBuiltinLLM(options);
-  }
-
-  // 外部模型调用，包装错误处理和回退逻辑
+  options: ChatCompletionOptions
+): Promise<ChatCompletionResult> {
   try {
-    let result: ChatCompletionResult;
-    
     switch (config.provider) {
       case 'openai':
       case 'deepseek':
-        result = await callOpenAICompatible(config, options);
-        break;
+        return await callOpenAICompatible(config, options);
       case 'gemini':
-        result = await callGemini(config, options);
-        break;
+        return await callGemini(config, options);
       case 'claude':
-        result = await callClaude(config, options);
-        break;
+        return await callClaude(config, options);
       default:
         throw new Error(`不支持的模型提供商: ${config.provider}`);
     }
-    
-    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[AI Model] ${config.provider} 调用失败:`, errorMessage);
-    
-    // 如果启用了回退机制，尝试使用内置模型
-    if (enableFallback) {
-      // 检查内置模型是否可用
-      const forgeApiKey = process.env.BUILT_IN_FORGE_API_KEY;
-      if (!forgeApiKey || forgeApiKey.trim() === '') {
-        // 内置模型不可用，直接抛出原始错误并给出提示
-        throw new Error(
-          `${config.provider} API 调用失败: ${errorMessage}\n\n` +
-          `请检查您的 API Key 是否正确配置。\n` +
-          `如果问题持续，请在设置页面重新测试 API Key。`
-        );
-      }
-      
-      console.log(`[AI Model] 回退到内置模型...`);
-      try {
-        const fallbackResult = await callBuiltinLLM(options);
-        return {
-          ...fallbackResult,
-          fallbackUsed: true,
-          originalError: errorMessage,
-        };
-      } catch (fallbackError) {
-        // 内置模型也失败了，抛出原始错误
-        const fallbackErrorMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        throw new Error(`执行失败: ${errorMessage}\n回退也失败: ${fallbackErrorMsg}`);
-      }
-    }
-    
-    // 不启用回退，直接抛出错误
-    throw new Error(`执行失败: ${errorMessage}`);
+    throw new Error(
+      `${config.provider} API 调用失败: ${errorMessage}\n\n` +
+      `请检查您的 API Key 是否正确配置。\n` +
+      `如果问题持续，请在设置页面重新测试 API Key。`
+    );
   }
 }
 
@@ -371,20 +290,7 @@ export async function testApiKey(
   logs.push(`[${new Date().toISOString()}] 开始测试 ${provider} API...`);
   logs.push(`[${new Date().toISOString()}] 目标模型: ${model}`);
   logs.push(`[${new Date().toISOString()}] API Key: ${config.apiKey?.slice(0, 8)}...${config.apiKey?.slice(-4)}`);
-  
-  // 内置模型不需要测试
-  if (provider === 'builtin') {
-    logs.push(`[${new Date().toISOString()}] 内置模型无需测试 API Key`);
-    return {
-      success: true,
-      provider,
-      model,
-      responseTime: Date.now() - startTime,
-      message: '内置模型可直接使用',
-      logs,
-    };
-  }
-  
+
   // 检查 API Key 是否存在
   if (!config.apiKey) {
     logs.push(`[${new Date().toISOString()}] 错误: API Key 为空`);
@@ -411,7 +317,7 @@ export async function testApiKey(
       messages: testMessages,
       maxTokens: 50,
       temperature: 0,
-    }, false); // 禁用回退，直接测试目标 API
+    });
     
     const responseTime = Date.now() - startTime;
     logs.push(`[${new Date().toISOString()}] 收到响应，耗时: ${responseTime}ms`);

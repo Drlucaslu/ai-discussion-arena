@@ -60,6 +60,24 @@ export interface DiscussionLog {
 // 全局日志存储（按讨论 ID 分组）
 const discussionLogs: Map<number, DiscussionLog[]> = new Map();
 
+// 轮次执行状态追踪
+export interface RoundExecutionState {
+  isExecuting: boolean;
+  currentRound: number;
+  isComplete: boolean;
+  error: string | null;
+}
+
+const executionStates: Map<number, RoundExecutionState> = new Map();
+
+export function getExecutionState(discussionId: number): RoundExecutionState | null {
+  return executionStates.get(discussionId) || null;
+}
+
+export function clearExecutionState(discussionId: number): void {
+  executionStates.delete(discussionId);
+}
+
 /**
  * 添加讨论日志
  */
@@ -218,19 +236,11 @@ export async function invokeJudge(
   addDiscussionLog(discussion.id, 'info', '裁判', `收到响应，耗时 ${responseTime}ms`, {
     responseTime,
     contentLength: result.content.length,
-    fallbackUsed: result.fallbackUsed,
   });
   
   // 确定实际使用的模型名称
-  let modelName = getModelDisplayName(judgeConfig.provider);
-  if (result.fallbackUsed) {
-    modelName = `内置模型 (Manus)`;
-    addDiscussionLog(discussion.id, 'warn', '裁判', `回退到内置模型`, {
-      originalError: result.originalError,
-    });
-  } else {
-    addDiscussionLog(discussion.id, 'info', '裁判', `成功使用模型: ${modelName}`);
-  }
+  const modelName = getModelDisplayName(judgeConfig.provider);
+  addDiscussionLog(discussion.id, 'info', '裁判', `成功使用模型: ${modelName}`);
   
   // 保存消息
   const message = await createMessage({
@@ -283,7 +293,7 @@ export async function invokeGuest(
     throw new Error(`嘉宾模型 ${guestModel} 未配置`);
   }
   
-  let modelDisplayName = getModelDisplayName(guestConfig.provider);
+  const modelDisplayName = getModelDisplayName(guestConfig.provider);
   
   addDiscussionLog(discussion.id, 'info', '嘉宾', `准备调用嘉宾模型: ${modelDisplayName}`, {
     provider: guestConfig.provider,
@@ -306,18 +316,8 @@ export async function invokeGuest(
   addDiscussionLog(discussion.id, 'info', '嘉宾', `收到响应，耗时 ${responseTime}ms`, {
     responseTime,
     contentLength: result.content.length,
-    fallbackUsed: result.fallbackUsed,
   });
-  
-  // 如果回退到内置模型，更新显示名称
-  if (result.fallbackUsed) {
-    modelDisplayName = `内置模型 (Manus)`;
-    addDiscussionLog(discussion.id, 'warn', '嘉宾', `回退到内置模型`, {
-      originalError: result.originalError,
-    });
-  } else {
-    addDiscussionLog(discussion.id, 'info', '嘉宾', `成功使用模型: ${modelDisplayName}`);
-  }
+  addDiscussionLog(discussion.id, 'info', '嘉宾', `成功使用模型: ${modelDisplayName}`);
   
   // 保存消息
   const message = await createMessage({
@@ -349,50 +349,88 @@ export async function executeDiscussionRound(
   };
 }> {
   const { discussion } = context;
-  const roundMessages: Message[] = [];
-  
-  // 获取最新消息列表
-  const currentMessages = await getMessagesByDiscussionId(discussion.id);
-  context.messages = currentMessages;
-  
-  // 1. 裁判引导
-  let judgeInstruction: string;
-  if (roundNumber === 1) {
-    judgeInstruction = '请开始主持这场讨论。首先介绍讨论主题，然后邀请各位嘉宾发表初始观点。';
-  } else if (roundNumber >= 5) {
-    judgeInstruction = '讨论已进行多轮，请评估是否已达成共识。如果是，请给出最终裁决和置信度评分；如果否，请继续引导讨论。';
-  } else {
-    judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。';
+
+  // 防止并发执行
+  const currentState = executionStates.get(discussion.id);
+  if (currentState?.isExecuting) {
+    throw new Error('该讨论正在执行中，请等待当前轮次完成');
   }
-  
-  const judgeResult = await invokeJudge(
-    { ...context, messages: currentMessages },
-    judgeInstruction
-  );
-  roundMessages.push(judgeResult.message);
-  
-  if (judgeResult.isComplete) {
+
+  // 设置执行状态
+  executionStates.set(discussion.id, {
+    isExecuting: true,
+    currentRound: roundNumber,
+    isComplete: false,
+    error: null,
+  });
+
+  try {
+    const roundMessages: Message[] = [];
+
+    // 获取最新消息列表
+    const currentMessages = await getMessagesByDiscussionId(discussion.id);
+    context.messages = currentMessages;
+
+    // 1. 裁判引导
+    let judgeInstruction: string;
+    if (roundNumber === 1) {
+      judgeInstruction = '请开始主持这场讨论。首先介绍讨论主题，然后邀请各位嘉宾发表初始观点。';
+    } else if (roundNumber >= 5) {
+      judgeInstruction = '讨论已进行多轮，请评估是否已达成共识。如果是，请给出最终裁决和置信度评分；如果否，请继续引导讨论。';
+    } else {
+      judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。';
+    }
+
+    const judgeResult = await invokeJudge(
+      { ...context, messages: currentMessages },
+      judgeInstruction
+    );
+    roundMessages.push(judgeResult.message);
+
+    if (judgeResult.isComplete) {
+      executionStates.set(discussion.id, {
+        isExecuting: false,
+        currentRound: roundNumber,
+        isComplete: true,
+        error: null,
+      });
+      return {
+        messages: roundMessages,
+        isComplete: true,
+        verdict: judgeResult.verdict,
+      };
+    }
+
+    // 2. 各嘉宾依次发言
+    for (const guestModel of discussion.guestModels) {
+      // 更新消息列表
+      const updatedMessages = await getMessagesByDiscussionId(discussion.id);
+      context.messages = updatedMessages;
+
+      const guestResult = await invokeGuest(context, guestModel);
+      roundMessages.push(guestResult.message);
+    }
+
+    executionStates.set(discussion.id, {
+      isExecuting: false,
+      currentRound: roundNumber,
+      isComplete: false,
+      error: null,
+    });
+
     return {
       messages: roundMessages,
-      isComplete: true,
-      verdict: judgeResult.verdict,
+      isComplete: false,
     };
+  } catch (err: any) {
+    executionStates.set(discussion.id, {
+      isExecuting: false,
+      currentRound: roundNumber,
+      isComplete: false,
+      error: err.message || 'Unknown error',
+    });
+    throw err;
   }
-  
-  // 2. 各嘉宾依次发言
-  for (const guestModel of discussion.guestModels) {
-    // 更新消息列表
-    const updatedMessages = await getMessagesByDiscussionId(discussion.id);
-    context.messages = updatedMessages;
-    
-    const guestResult = await invokeGuest(context, guestModel);
-    roundMessages.push(guestResult.message);
-  }
-  
-  return {
-    messages: roundMessages,
-    isComplete: false,
-  };
 }
 
 /**

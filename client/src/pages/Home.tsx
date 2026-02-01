@@ -31,11 +31,10 @@ import { toast } from "sonner";
 
 // 支持的模型列表
 const MODELS = [
-  { provider: 'builtin', name: '内置模型 (Manus)', model: 'builtin' },
   { provider: 'openai', name: 'OpenAI GPT-4o', model: 'gpt-4o' },
   { provider: 'openai', name: 'OpenAI GPT-4o-mini', model: 'gpt-4o-mini' },
-  { provider: 'gemini', name: 'Google Gemini 1.5 Pro', model: 'gemini-1.5-pro' },
-  { provider: 'claude', name: 'Anthropic Claude 3.5 Sonnet', model: 'claude-3-5-sonnet' },
+  { provider: 'gemini', name: 'Google Gemini 2.5 Flash', model: 'gemini-2.5-flash' },
+  { provider: 'claude', name: 'Anthropic Claude Sonnet 4.5', model: 'claude-sonnet-4-5' },
   { provider: 'deepseek', name: 'DeepSeek Chat', model: 'deepseek-chat' },
 ];
 
@@ -48,8 +47,8 @@ export default function Home() {
   const [newDiscussion, setNewDiscussion] = useState({
     title: '',
     question: '',
-    guestModels: ['builtin'] as string[],
-    judgeModel: 'builtin',
+    guestModels: [] as string[],
+    judgeModel: '',
     confidenceThreshold: 0.8,
     enableDynamicAgent: false,
     dataReadLimit: 100,
@@ -58,7 +57,7 @@ export default function Home() {
   // 获取讨论列表
   const { data: discussions, isLoading: discussionsLoading, refetch } = trpc.discussion.list.useQuery(
     undefined,
-    { enabled: isAuthenticated }
+    { enabled: isAuthenticated, refetchOnWindowFocus: true }
   );
 
   // 创建讨论

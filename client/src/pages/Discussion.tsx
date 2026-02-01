@@ -73,24 +73,39 @@ export default function Discussion() {
   const [currentRound, setCurrentRound] = useState(1);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // 获取讨论详情
+  // 获取讨论详情（运行时轮询，检测讨论是否已完成）
   const { data: discussion, isLoading: discussionLoading, refetch: refetchDiscussion } = trpc.discussion.get.useQuery(
     { id: discussionId },
-    { enabled: isAuthenticated && discussionId > 0 }
+    {
+      enabled: isAuthenticated && discussionId > 0,
+      refetchInterval: isRunning ? 2000 : false,
+    }
   );
 
-  // 获取消息列表
+  // 获取消息列表（运行时轮询，实现逐条显示效果）
   const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = trpc.message.list.useQuery(
     { discussionId },
-    { enabled: isAuthenticated && discussionId > 0 }
+    {
+      enabled: isAuthenticated && discussionId > 0,
+      refetchInterval: isRunning ? 1000 : false,
+    }
   );
 
-  // 获取讨论日志
+  // 获取讨论日志（始终启用，不仅仅在运行时）
   const { data: logs, refetch: refetchLogs } = trpc.orchestrator.getLogs.useQuery(
     { discussionId },
-    { 
+    {
       enabled: isAuthenticated && discussionId > 0,
-      refetchInterval: isRunning ? 500 : false, // 运行时每 500ms 刷新
+      refetchInterval: isRunning ? 500 : false,
+    }
+  );
+
+  // 获取轮次执行状态
+  const { data: roundStatus } = trpc.orchestrator.getRoundStatus.useQuery(
+    { discussionId },
+    {
+      enabled: isAuthenticated && discussionId > 0 && isRunning,
+      refetchInterval: isRunning ? 1000 : false,
     }
   );
 
@@ -115,25 +130,8 @@ export default function Discussion() {
     },
   });
 
-  // 执行一轮讨论
-  const executeRoundMutation = trpc.orchestrator.executeRound.useMutation({
-    onSuccess: (result) => {
-      refetchMessages();
-      refetchLogs();
-      if (result.isComplete) {
-        setIsRunning(false);
-        refetchDiscussion();
-        toast.success('讨论已完成，裁判已做出最终裁决');
-      } else {
-        setCurrentRound(prev => prev + 1);
-      }
-    },
-    onError: (error) => {
-      toast.error(`执行失败: ${error.message}`);
-      setIsRunning(false);
-      refetchLogs();
-    },
-  });
+  // 执行一轮讨论（fire-and-forget，通过轮询 roundStatus 检测完成）
+  const executeRoundMutation = trpc.orchestrator.executeRound.useMutation();
 
   // 请求最终裁决
   const requestVerdictMutation = trpc.orchestrator.requestVerdict.useMutation({
@@ -178,15 +176,53 @@ export default function Discussion() {
     }
   }, []);
 
+  // 当讨论状态变为 completed 时，停止运行
+  useEffect(() => {
+    if (isRunning && discussion?.status === 'completed') {
+      setIsRunning(false);
+      refetchMessages();
+      refetchLogs();
+      toast.success('讨论已完成，裁判已做出最终裁决');
+    }
+  }, [discussion?.status]);
+
+  // 响应轮次执行状态变化
+  useEffect(() => {
+    if (!isRunning || !roundStatus) return;
+    if (roundStatus.isExecuting) return;
+
+    if (roundStatus.error) {
+      toast.error(`执行失败: ${roundStatus.error}`);
+      setIsRunning(false);
+      refetchLogs();
+    } else if (roundStatus.isComplete) {
+      setIsRunning(false);
+      refetchDiscussion();
+      refetchMessages();
+      refetchLogs();
+    } else if (roundStatus.currentRound === currentRound) {
+      // 当前轮次完成，进入下一轮
+      refetchMessages();
+      setCurrentRound(prev => prev + 1);
+    }
+  }, [roundStatus, isRunning]);
+
   // 自动执行讨论轮次
   useEffect(() => {
-    if (isRunning && currentRound <= 10 && discussion?.status === 'active') {
-      const timer = setTimeout(() => {
-        executeRoundMutation.mutate({ discussionId, roundNumber: currentRound });
-      }, 1000);
-      return () => clearTimeout(timer);
+    if (!isRunning || discussion?.status !== 'active') return;
+    if (currentRound > 10) {
+      setIsRunning(false);
+      toast.info('已达到最大轮次（10轮）');
+      return;
     }
-  }, [isRunning, currentRound, discussion?.status]);
+    // 如果当前轮次正在执行，不重复触发
+    if (roundStatus?.isExecuting) return;
+
+    const timer = setTimeout(() => {
+      executeRoundMutation.mutate({ discussionId, roundNumber: currentRound });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [isRunning, currentRound, discussion?.status, roundStatus]);
 
   const handleStartDiscussion = async () => {
     if (!messages || messages.length === 0) {
@@ -250,7 +286,7 @@ export default function Discussion() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* 顶部导航 */}
       <header className="border-b bg-card px-4 py-3 shrink-0">
         <div className="flex items-center justify-between">
@@ -362,7 +398,7 @@ export default function Discussion() {
               )}
               
               {/* 加载指示器 */}
-              {(startMutation.isPending || executeRoundMutation.isPending || requestVerdictMutation.isPending) && (
+              {(startMutation.isPending || (isRunning && roundStatus?.isExecuting) || requestVerdictMutation.isPending) && (
                 <div className="flex gap-3">
                   <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
                     <Loader2 className="w-5 h-5 animate-spin" />

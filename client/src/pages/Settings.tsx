@@ -46,8 +46,6 @@ const PROVIDER_MODELS: Record<string, { id: string; name: string }[]> = {
   gemini: [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (推荐)' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-    { id: 'gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro' },
-    { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash' },
   ],
   claude: [
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },

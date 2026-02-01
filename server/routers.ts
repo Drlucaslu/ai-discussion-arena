@@ -24,6 +24,8 @@ import {
   invokeGuest,
   getDiscussionLogs,
   clearDiscussionLogs,
+  addDiscussionLog,
+  getExecutionState,
 } from "./discussionOrchestrator";
 import type { ModelConfig } from "./aiModels";
 
@@ -42,9 +44,6 @@ function getModelConfigsMap(): Map<string, ModelConfig> {
       });
     }
   }
-  
-  // 添加内置模型
-  modelConfigs.set('builtin', { provider: 'builtin' });
   
   return modelConfigs;
 }
@@ -174,29 +173,40 @@ export const appRouter = router({
         return { message: hostMessage };
       }),
 
-    // 执行一轮讨论
+    // 执行一轮讨论（fire-and-forget，通过 getRoundStatus 轮询进度）
     executeRound: publicProcedure
       .input(z.object({
         discussionId: z.number(),
         roundNumber: z.number().min(1),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(({ input }) => {
         const discussion = getDiscussionById(input.discussionId);
         if (!discussion) {
           throw new Error("讨论不存在");
         }
-        
+
         const messages = getMessagesByDiscussionId(input.discussionId);
         const modelConfigs = getModelConfigsMap();
-        
+
         const context: DiscussionContext = {
           discussion,
           messages,
           modelConfigs,
         };
-        
-        const result = await executeDiscussionRound(context, input.roundNumber);
-        return result;
+
+        // Fire and forget - 不等待完成，前端通过轮询获取进度
+        executeDiscussionRound(context, input.roundNumber).catch((err) => {
+          addDiscussionLog(discussion.id, 'error', '系统', `轮次执行失败: ${err.message}`);
+        });
+
+        return { started: true };
+      }),
+
+    // 获取轮次执行状态
+    getRoundStatus: publicProcedure
+      .input(z.object({ discussionId: z.number() }))
+      .query(({ input }) => {
+        return getExecutionState(input.discussionId);
       }),
 
     // 让裁判发言
