@@ -41,7 +41,7 @@ const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: stri
     baseUrl: 'https://api.openai.com/v1',
   },
   gemini: {
-    defaultModel: 'gemini-1.5-pro',
+    defaultModel: 'gemini-2.5-flash',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
   },
   claude: {
@@ -62,8 +62,10 @@ const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: stri
 export const SUPPORTED_MODELS = [
   { provider: 'openai' as const, name: 'OpenAI GPT-4o', model: 'gpt-4o' },
   { provider: 'openai' as const, name: 'OpenAI GPT-4o-mini', model: 'gpt-4o-mini' },
-  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Pro', model: 'gemini-1.5-pro' },
-  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Flash', model: 'gemini-1.5-flash' },
+  { provider: 'gemini' as const, name: 'Google Gemini 2.5 Flash', model: 'gemini-2.5-flash' },
+  { provider: 'gemini' as const, name: 'Google Gemini 2.5 Pro', model: 'gemini-2.5-pro' },
+  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Pro', model: 'gemini-1.5-pro-latest' },
+  { provider: 'gemini' as const, name: 'Google Gemini 1.5 Flash', model: 'gemini-1.5-flash-latest' },
   { provider: 'claude' as const, name: 'Anthropic Claude Sonnet 4.5', model: 'claude-sonnet-4-5' },
   { provider: 'claude' as const, name: 'Anthropic Claude Haiku 4.5', model: 'claude-haiku-4-5' },
   { provider: 'claude' as const, name: 'Anthropic Claude Opus 4.5', model: 'claude-opus-4-5' },
