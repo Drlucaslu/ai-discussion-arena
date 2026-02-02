@@ -539,16 +539,12 @@ export async function executeDiscussionRound(
       };
     }
 
-    // 2. 各嘉宾并行发言
-    addDiscussionLog(discussion.id, 'info', '系统', `${discussion.guestModels.length} 位嘉宾并行发言中...`);
-    const updatedMessages = await getMessagesByDiscussionId(discussion.id);
-    context.messages = updatedMessages;
+    // 2. 各嘉宾依次发言（队列模式：等上一位说完再轮到下一位）
+    for (const guestModel of discussion.guestModels) {
+      const updatedMessages = await getMessagesByDiscussionId(discussion.id);
+      context.messages = updatedMessages;
 
-    const guestPromises = discussion.guestModels.map(guestModel =>
-      invokeGuest({ ...context, messages: [...updatedMessages] }, guestModel)
-    );
-    const guestResults = await Promise.all(guestPromises);
-    for (const guestResult of guestResults) {
+      const guestResult = await invokeGuest(context, guestModel);
       roundMessages.push(guestResult.message);
     }
 
