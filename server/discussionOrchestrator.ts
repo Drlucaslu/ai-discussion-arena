@@ -6,8 +6,8 @@ import { callAIModel, ModelConfig, ChatMessage, getModelDisplayName } from './ai
 import { createMessage, updateDiscussion, getMessagesByDiscussionId } from './db';
 import type { Discussion, Message } from '../drizzle/schema';
 
-// 角色系统提示词
-const SYSTEM_PROMPTS = {
+// 角色系统提示词（讨论模式）
+const DISCUSSION_PROMPTS = {
   judge: `你是一位专业的讨论裁判。你的职责是：
 1. 引导讨论围绕主题进行，确保讨论不偏离核心问题
 2. 在适当的时候要求嘉宾提供证据支持其观点
@@ -32,6 +32,35 @@ const SYSTEM_PROMPTS = {
 
 请积极参与讨论，提出有建设性的观点。当你引用事实或数据时，请说明来源。`,
 };
+
+// 角色系统提示词（文档协作模式）
+const DOCUMENT_PROMPTS = {
+  judge: `你是一位专业的文档协作主编。你的职责是：
+1. 分析用户的需求，理解需要产出的文档类型和内容
+2. 将文档任务分解为多个部分，分配给各位协作者
+3. 审阅协作者提交的内容，提出修改建议
+4. 整合所有内容，产出最终的完整文档
+
+你需要确保文档结构清晰、逻辑严密、内容完整。最终输出应该是一份可以直接使用的完整文档。
+
+在最终产出文档时，请使用以下格式：
+【置信度评分】
+- 文档完整性: X.XX
+- 内容质量: X.XX
+【最终结论】
+（在此输出完整的文档内容，使用 Markdown 格式）`,
+
+  guest: (modelName: string) => `你是文档协作者 ${modelName}。你的职责是：
+1. 根据主编的分工，撰写分配给你的文档章节
+2. 审阅其他协作者的内容，提供建设性意见
+3. 基于主编的反馈修改和完善你的内容
+4. 确保你的内容与整体文档风格一致
+
+请积极配合主编的安排，产出高质量的文档内容。使用 Markdown 格式书写。`,
+};
+
+// 兼容旧引用
+const SYSTEM_PROMPTS = DISCUSSION_PROMPTS;
 
 export interface DiscussionContext {
   discussion: Discussion;
@@ -187,11 +216,27 @@ function detectVerdict(content: string): boolean {
 /**
  * 构建对话历史
  */
-function buildChatHistory(messages: Message[], role: 'judge' | 'guest', modelName?: string): ChatMessage[] {
-  const systemPrompt = role === 'judge' 
-    ? SYSTEM_PROMPTS.judge 
-    : SYSTEM_PROMPTS.guest(modelName || 'AI');
-  
+function buildChatHistory(messages: Message[], role: 'judge' | 'guest', modelName?: string, discussion?: Discussion): ChatMessage[] {
+  const isDocMode = discussion?.mode === 'document';
+  const prompts = isDocMode ? DOCUMENT_PROMPTS : DISCUSSION_PROMPTS;
+
+  let systemPrompt = role === 'judge'
+    ? prompts.judge
+    : prompts.guest(modelName || 'AI');
+
+  // 注入附件文件内容作为参考资料
+  if (discussion?.attachments && discussion.attachments.length > 0) {
+    const fileContextParts: string[] = [];
+    for (const att of discussion.attachments) {
+      if (att.extractedText) {
+        fileContextParts.push(`=== 文件: ${att.fileName} ===\n${att.extractedText}`);
+      }
+    }
+    if (fileContextParts.length > 0) {
+      systemPrompt += `\n\n以下是用户提供的参考文件内容，请在讨论中参考这些资料：\n\n${fileContextParts.join('\n\n')}`;
+    }
+  }
+
   const history: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
   ];
@@ -239,8 +284,8 @@ export async function invokeJudge(
     hasApiKey: !!judgeConfig.apiKey,
   });
   
-  const chatHistory = buildChatHistory(messages, 'judge');
-  
+  const chatHistory = buildChatHistory(messages, 'judge', undefined, discussion);
+
   // 添加特殊指令
   if (instruction) {
     chatHistory.push({ role: 'user', content: instruction });
@@ -328,7 +373,7 @@ export async function invokeGuest(
     hasApiKey: !!guestConfig.apiKey,
   });
   
-  const chatHistory = buildChatHistory(messages, 'guest', modelDisplayName);
+  const chatHistory = buildChatHistory(messages, 'guest', modelDisplayName, discussion);
   
   addDiscussionLog(discussion.id, 'info', '嘉宾', `发送 API 请求...`, {
     messageCount: chatHistory.length,
@@ -399,14 +444,25 @@ export async function executeDiscussionRound(
     const currentMessages = await getMessagesByDiscussionId(discussion.id);
     context.messages = currentMessages;
 
-    // 1. 裁判引导
+    // 1. 裁判引导（根据模式选择不同指令）
+    const isDocMode = discussion.mode === 'document';
     let judgeInstruction: string;
-    if (roundNumber === 1) {
-      judgeInstruction = '请开始主持这场讨论。首先介绍讨论主题，然后邀请各位嘉宾发表初始观点。';
-    } else if (roundNumber === 2) {
-      judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。如果你认为各方观点已经充分且达成共识，可以直接给出最终裁决和置信度评分。';
+    if (isDocMode) {
+      if (roundNumber === 1) {
+        judgeInstruction = '请分析用户的需求，制定文档大纲和结构。将各章节分配给各位协作者，并说明每个部分的要求和期望内容。';
+      } else if (roundNumber === 2) {
+        judgeInstruction = '请审阅各位协作者提交的内容，提出修改建议和改进方向。如果你认为各部分内容已经足够完善，可以直接整合产出最终文档。';
+      } else {
+        judgeInstruction = '请评估文档是否已经完善。如果各部分内容质量达标，请整合所有内容，输出完整的最终文档（使用 Markdown 格式），并给出置信度评分。';
+      }
     } else {
-      judgeInstruction = '请评估讨论是否已经充分。如果各方观点已经明确且达成共识，请给出最终裁决和置信度评分；如果还有分歧需要探讨，请继续引导讨论。';
+      if (roundNumber === 1) {
+        judgeInstruction = '请开始主持这场讨论。首先介绍讨论主题，然后邀请各位嘉宾发表初始观点。';
+      } else if (roundNumber === 2) {
+        judgeInstruction = '请根据之前的讨论，继续引导嘉宾深入探讨，或要求他们提供更多证据。如果你认为各方观点已经充分且达成共识，可以直接给出最终裁决和置信度评分。';
+      } else {
+        judgeInstruction = '请评估讨论是否已经充分。如果各方观点已经明确且达成共识，请给出最终裁决和置信度评分；如果还有分歧需要探讨，请继续引导讨论。';
+      }
     }
 
     const judgeResult = await invokeJudge(
@@ -485,7 +541,21 @@ export async function startDiscussion(
 export async function requestFinalVerdict(
   context: DiscussionContext
 ): Promise<OrchestratorResult> {
-  const instruction = `讨论已经进行了充分的时间。请现在做出最终裁决：
+  const isDocMode = context.discussion.mode === 'document';
+
+  const instruction = isDocMode
+    ? `文档协作已经进行了充分的讨论。请现在整合所有协作者的贡献，产出最终的完整文档：
+1. 整合各协作者提交的内容
+2. 确保文档结构完整、逻辑清晰
+3. 评估文档质量的置信度（0-1之间）
+
+请使用以下格式：
+【置信度评分】
+- 文档完整性: X.XX
+- 内容质量: X.XX
+【最终结论】
+（在此输出完整的文档内容，使用 Markdown 格式）`
+    : `讨论已经进行了充分的时间。请现在做出最终裁决：
 1. 总结各方的主要观点和论据
 2. 评估每个关键假设的置信度（0-1之间）
 3. 给出你的最终结论

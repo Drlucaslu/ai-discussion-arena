@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
   DropdownMenu,
@@ -33,6 +34,9 @@ import {
   Download,
   FileText,
   FileSpreadsheet,
+  Paperclip,
+  X,
+  Image,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
@@ -184,6 +188,16 @@ export default function Discussion() {
   const [currentRound, setCurrentRound] = useState(1);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  // 继续讨论状态
+  const [continueText, setContinueText] = useState('');
+  const [continueFiles, setContinueFiles] = useState<Array<{
+    fileName: string;
+    fileType: 'pdf' | 'xlsx' | 'xls' | 'md' | 'png' | 'jpg' | 'jpeg' | 'gif' | 'webp';
+    base64Data: string;
+    fileSize: number;
+  }>>([]);
+  const continueFileInputRef = useRef<HTMLInputElement>(null);
+
   // 获取讨论详情（运行时轮询，检测讨论是否已完成）
   const { data: discussion, isLoading: discussionLoading, refetch: refetchDiscussion } = trpc.discussion.get.useQuery(
     { id: discussionId },
@@ -261,6 +275,77 @@ export default function Discussion() {
       refetchLogs();
     },
   });
+
+  // 继续讨论
+  const continueMutation = trpc.orchestrator.continueDiscussion.useMutation({
+    onSuccess: () => {
+      setContinueText('');
+      setContinueFiles([]);
+      refetchDiscussion();
+      refetchMessages();
+      refetchLogs();
+      // 计算下一轮次：统计已有的裁判消息数作为已完成轮数
+      const judgeCount = messages?.filter(m => m.role === 'judge').length || 0;
+      setCurrentRound(judgeCount + 1);
+      setIsRunning(true);
+      setAutoScroll(true);
+      toast.success('讨论已重新开启');
+    },
+    onError: (error) => {
+      toast.error(`继续讨论失败: ${error.message}`);
+    },
+  });
+
+  const handleContinueDiscussion = () => {
+    if (!continueText.trim()) {
+      toast.error('请输入继续讨论的内容');
+      return;
+    }
+    continueMutation.mutate({
+      discussionId,
+      content: continueText,
+      attachments: continueFiles,
+    });
+  };
+
+  const handleContinueFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      if (file.size > 20 * 1024 * 1024) {
+        toast.error(`文件 ${file.name} 超过 20MB 限制`);
+        continue;
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const allowed = ['pdf', 'xlsx', 'xls', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'];
+      if (!allowed.includes(ext || '')) {
+        toast.error(`不支持的文件格式: ${file.name}`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        setContinueFiles(prev => [...prev, {
+          fileName: file.name,
+          fileType: ext as any,
+          base64Data: base64,
+          fileSize: file.size,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+
+  const removeContinueFile = (index: number) => {
+    setContinueFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   // 滚动到底部
   useEffect(() => {
@@ -411,6 +496,9 @@ export default function Discussion() {
                 <Badge variant={discussion.status === 'completed' ? 'default' : 'secondary'}>
                   {discussion.status === 'active' ? '进行中' : discussion.status === 'completed' ? '已完成' : '已归档'}
                 </Badge>
+                {discussion.mode === 'document' && (
+                  <Badge variant="default" className="bg-amber-500 text-xs">协作产出文档</Badge>
+                )}
                 <span>·</span>
                 <span>{discussion.guestModels.length} 位嘉宾</span>
                 <span>·</span>
@@ -478,9 +566,19 @@ export default function Discussion() {
               <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
                 <User className="w-5 h-5 text-white" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="font-medium text-sm mb-1">讨论问题</p>
                 <p className="text-foreground">{discussion.question}</p>
+                {discussion.attachments && discussion.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {discussion.attachments.map((att: any, i: number) => (
+                      <Badge key={i} variant="secondary" className="text-xs">
+                        <Paperclip className="w-3 h-3 mr-1" />
+                        {att.fileName}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -561,6 +659,73 @@ export default function Discussion() {
                   <p className="text-sm font-medium">讨论进行中 - 第 {currentRound} 轮</p>
                   <Progress value={currentRound * 10} className="mt-2" />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* 继续讨论输入区域 */}
+          {discussion.status === 'completed' && !isRunning && (
+            <div className="border-t bg-card p-4 shrink-0 space-y-3">
+              <p className="text-sm font-medium text-muted-foreground">补充信息，继续讨论</p>
+              <Textarea
+                placeholder="输入新的讨论思路、补充信息或追问..."
+                rows={3}
+                value={continueText}
+                onChange={(e) => setContinueText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleContinueDiscussion();
+                  }
+                }}
+              />
+              {/* 已上传文件列表 */}
+              {continueFiles.length > 0 && (
+                <div className="space-y-1">
+                  {continueFiles.map((file, index) => (
+                    <div key={index} className="flex items-center gap-2 p-1.5 bg-muted rounded text-sm">
+                      {['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(file.fileType)
+                        ? <Image className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        : <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+                      <span className="truncate flex-1">{file.fileName}</span>
+                      <span className="text-xs text-muted-foreground shrink-0">{formatFileSize(file.fileSize)}</span>
+                      <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => removeContinueFile(index)}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <input
+                  ref={continueFileInputRef}
+                  type="file"
+                  accept=".pdf,.xlsx,.xls,.md,.png,.jpg,.jpeg,.gif,.webp"
+                  multiple
+                  className="hidden"
+                  onChange={handleContinueFileUpload}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => continueFileInputRef.current?.click()}
+                >
+                  <Paperclip className="w-4 h-4 mr-1" />
+                  附件
+                </Button>
+                <div className="flex-1" />
+                <span className="text-xs text-muted-foreground">Ctrl+Enter 发送</span>
+                <Button
+                  size="sm"
+                  onClick={handleContinueDiscussion}
+                  disabled={!continueText.trim() || continueMutation.isPending}
+                >
+                  {continueMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-1" />
+                  )}
+                  继续讨论
+                </Button>
               </div>
             </div>
           )}

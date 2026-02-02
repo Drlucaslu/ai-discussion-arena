@@ -99,6 +99,14 @@ function initializeDatabase() {
   } catch (e) {
     // 字段已存在，忽略错误
   }
+
+  // 迁移：添加讨论模式和附件字段
+  try {
+    _sqlite.exec(`ALTER TABLE discussions ADD COLUMN mode TEXT DEFAULT 'discussion' NOT NULL`);
+  } catch (e) {}
+  try {
+    _sqlite.exec(`ALTER TABLE discussions ADD COLUMN attachments TEXT`);
+  } catch (e) {}
   
   // 创建设置表
   _sqlite.exec(`
@@ -159,6 +167,16 @@ export function updateDiscussion(id: number, data: Partial<InsertDiscussion>): v
 
 export function deleteDiscussion(id: number): void {
   const db = getDb();
+  // 删除关联的上传文件
+  const discussion = getDiscussionById(id);
+  if (discussion?.attachments) {
+    for (const att of discussion.attachments) {
+      const fullPath = path.join(process.cwd(), "data", att.filePath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+  }
   // 先删除相关消息
   db.delete(messages).where(eq(messages.discussionId, id)).run();
   // 再删除讨论

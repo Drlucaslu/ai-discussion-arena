@@ -15,6 +15,7 @@ import {
   updateDefaultSettings,
 } from "./db";
 import { SUPPORTED_MODELS, ModelProvider, testApiKey } from "./aiModels";
+import { saveUploadedFile, parsePDF, parseExcel, parseMarkdown, parseImage, IMAGE_EXTENSIONS } from "./fileParsing";
 import {
   startDiscussion,
   executeDiscussionRound,
@@ -77,9 +78,46 @@ export const appRouter = router({
         confidenceThreshold: z.number().min(0).max(1).default(0.8),
         enableDynamicAgent: z.boolean().default(false),
         dataReadLimit: z.number().min(1).max(1000).default(100),
+        mode: z.enum(['discussion', 'document']).optional().default('discussion'),
+        attachments: z.array(z.object({
+          fileName: z.string(),
+          fileType: z.enum(['pdf', 'xlsx', 'xls', 'md']),
+          base64Data: z.string(),
+        })).optional().default([]),
       }))
-      .mutation(({ input }) => {
-        const discussion = createDiscussion(input);
+      .mutation(async ({ input }) => {
+        const { attachments: rawAttachments, ...rest } = input;
+
+        // 先创建讨论
+        const discussion = createDiscussion(rest);
+
+        // 处理附件
+        if (rawAttachments && rawAttachments.length > 0) {
+          const attachments = [];
+          for (const att of rawAttachments) {
+            const { filePath, buffer } = saveUploadedFile(att.fileName, att.base64Data, discussion.id);
+            let extractedText = '';
+            if (att.fileType === 'pdf') {
+              extractedText = await parsePDF(buffer);
+            } else if (att.fileType === 'md') {
+              extractedText = parseMarkdown(buffer);
+            } else {
+              extractedText = parseExcel(buffer);
+            }
+            attachments.push({
+              id: `${discussion.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              fileName: att.fileName,
+              fileType: att.fileType,
+              fileSize: buffer.length,
+              filePath,
+              extractedText,
+              uploadedAt: new Date().toISOString(),
+            });
+          }
+          updateDiscussion(discussion.id, { attachments } as any);
+          return getDiscussionById(discussion.id)!;
+        }
+
         return discussion;
       }),
 
@@ -272,6 +310,83 @@ export const appRouter = router({
         
         const result = await invokeGuest(context, input.guestModel);
         return result;
+      }),
+
+    // 继续已完成的讨论（添加新信息后重新开启）
+    continueDiscussion: publicProcedure
+      .input(z.object({
+        discussionId: z.number(),
+        content: z.string().min(1),
+        attachments: z.array(z.object({
+          fileName: z.string(),
+          fileType: z.enum(['pdf', 'xlsx', 'xls', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp']),
+          base64Data: z.string(),
+        })).optional().default([]),
+      }))
+      .mutation(async ({ input }) => {
+        const discussion = getDiscussionById(input.discussionId);
+        if (!discussion) {
+          throw new Error("讨论不存在");
+        }
+        if (discussion.status !== 'completed') {
+          throw new Error("只能继续已完成的讨论");
+        }
+
+        // 处理新附件
+        const newAttachments = [];
+        for (const att of input.attachments) {
+          const { filePath, buffer } = saveUploadedFile(att.fileName, att.base64Data, discussion.id);
+          let extractedText = '';
+          if (att.fileType === 'pdf') {
+            extractedText = await parsePDF(buffer);
+          } else if (att.fileType === 'md') {
+            extractedText = parseMarkdown(buffer);
+          } else if (IMAGE_EXTENSIONS.includes(att.fileType)) {
+            extractedText = parseImage(att.fileName, buffer.length);
+          } else {
+            extractedText = parseExcel(buffer);
+          }
+          newAttachments.push({
+            id: `${discussion.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            fileName: att.fileName,
+            fileType: att.fileType,
+            fileSize: buffer.length,
+            filePath,
+            extractedText,
+            uploadedAt: new Date().toISOString(),
+          });
+        }
+
+        // 合并附件
+        const allAttachments = [...(discussion.attachments || []), ...newAttachments];
+
+        // 构建主持人消息内容
+        let hostContent = input.content;
+        if (newAttachments.length > 0) {
+          const fileSummaries = newAttachments
+            .map(a => `- ${a.fileName} (${a.fileType})`)
+            .join('\n');
+          hostContent += `\n\n[附加文件]\n${fileSummaries}`;
+        }
+
+        // 创建新的主持人消息
+        createMessage({
+          discussionId: input.discussionId,
+          role: 'host',
+          content: hostContent,
+        });
+
+        // 重新开启讨论
+        updateDiscussion(input.discussionId, {
+          status: 'active',
+          attachments: allAttachments,
+          finalVerdict: null,
+          confidenceScores: null,
+        } as any);
+
+        addDiscussionLog(input.discussionId, 'info', '系统', '讨论已重新开启，发起人补充了新信息');
+
+        return getDiscussionById(input.discussionId)!;
       }),
 
     // 请求最终裁决

@@ -14,6 +14,17 @@ export const discussions = sqliteTable("discussions", {
   confidenceThreshold: real("confidenceThreshold").default(0.8).notNull(),
   enableDynamicAgent: integer("enableDynamicAgent", { mode: "boolean" }).default(false).notNull(),
   dataReadLimit: integer("dataReadLimit").default(100).notNull(),
+  // 讨论模式与附件
+  mode: text("mode", { enum: ["discussion", "document"] }).default("discussion").notNull(),
+  attachments: text("attachments", { mode: "json" }).$type<Array<{
+    id: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    filePath: string;
+    extractedText: string;
+    uploadedAt: string;
+  }>>(),
   // 最终结论
   finalVerdict: text("finalVerdict"),
   confidenceScores: text("confidenceScores", { mode: "json" }).$type<Record<string, number>>(),

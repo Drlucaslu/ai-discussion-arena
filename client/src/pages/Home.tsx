@@ -12,20 +12,23 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
-import { 
-  MessageSquare, 
-  Plus, 
-  Settings, 
-  LogOut, 
-  Loader2, 
-  Users, 
-  Gavel, 
+import {
+  MessageSquare,
+  Plus,
+  Settings,
+  LogOut,
+  Loader2,
+  Users,
+  Gavel,
   CheckCircle2,
   Clock,
   Archive,
-  Trash2
+  Trash2,
+  Paperclip,
+  X,
+  FileText,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -52,7 +55,17 @@ export default function Home() {
     confidenceThreshold: 0.8,
     enableDynamicAgent: false,
     dataReadLimit: 100,
+    mode: 'discussion' as 'discussion' | 'document',
   });
+
+  // 文件上传状态
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{
+    fileName: string;
+    fileType: 'pdf' | 'xlsx' | 'xls' | 'md';
+    base64Data: string;
+    fileSize: number;
+  }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 获取讨论列表
   const { data: discussions, isLoading: discussionsLoading, refetch } = trpc.discussion.list.useQuery(
@@ -65,6 +78,7 @@ export default function Home() {
     onSuccess: (data) => {
       toast.success('讨论创建成功');
       setIsCreateDialogOpen(false);
+      setUploadedFiles([]);
       refetch();
       navigate(`/discussion/${data.id}`);
     },
@@ -93,7 +107,51 @@ export default function Home() {
       toast.error('请至少选择一个嘉宾模型');
       return;
     }
-    createMutation.mutate(newDiscussion);
+    createMutation.mutate({
+      ...newDiscussion,
+      attachments: uploadedFiles,
+    });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    for (const file of Array.from(files)) {
+      if (file.size > 20 * 1024 * 1024) {
+        toast.error(`文件 ${file.name} 超过 20MB 限制`);
+        continue;
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!['pdf', 'xlsx', 'xls', 'md'].includes(ext || '')) {
+        toast.error(`不支持的文件格式: ${file.name}`);
+        continue;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        setUploadedFiles(prev => [...prev, {
+          fileName: file.name,
+          fileType: ext as 'pdf' | 'xlsx' | 'xls' | 'md',
+          base64Data: base64,
+          fileSize: file.size,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    }
+    // 重置 input 以允许重复选择同一文件
+    e.target.value = '';
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleGuestModelToggle = (model: string) => {
@@ -224,6 +282,72 @@ export default function Home() {
                       onChange={(e) => setNewDiscussion(prev => ({ ...prev, question: e.target.value }))}
                     />
                   </div>
+                </div>
+
+                <Separator />
+
+                {/* 讨论模式 */}
+                <div className="space-y-3">
+                  <Label>讨论模式</Label>
+                  <Select
+                    value={newDiscussion.mode}
+                    onValueChange={(value: 'discussion' | 'document') => setNewDiscussion(prev => ({ ...prev, mode: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="discussion">问题讨论 — AI 辩论并给出结论</SelectItem>
+                      <SelectItem value="document">协作产出文档 — AI 协作撰写文档（如 PRD）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* 文件上传 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Paperclip className="w-4 h-4" />
+                    <Label>参考文件（可选）</Label>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.xlsx,.xls,.md"
+                    multiple
+                    className="hidden"
+                    onChange={handleFileUpload}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Paperclip className="w-4 h-4 mr-2" />
+                    上传 PDF / Excel / Markdown 文件
+                  </Button>
+                  {uploadedFiles.length > 0 && (
+                    <div className="space-y-2">
+                      {uploadedFiles.map((file, index) => (
+                        <div key={index} className="flex items-center gap-2 p-2 bg-muted rounded-md">
+                          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                          <span className="text-sm truncate flex-1">{file.fileName}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">{formatFileSize(file.fileSize)}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0"
+                            onClick={() => removeFile(index)}
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    支持 PDF、Excel、Markdown 格式，单个文件最大 20MB。文件内容将作为 AI 讨论的参考资料。
+                  </p>
                 </div>
 
                 <Separator />
