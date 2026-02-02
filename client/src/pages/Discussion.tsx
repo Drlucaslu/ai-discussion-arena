@@ -6,12 +6,18 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
-import { 
-  ArrowLeft, 
-  Loader2, 
-  Send, 
-  Gavel, 
-  User, 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ArrowLeft,
+  Loader2,
+  Send,
+  Gavel,
+  User,
   Bot,
   Play,
   Square,
@@ -23,7 +29,10 @@ import {
   RefreshCw,
   Settings,
   ScrollText,
-  Bug
+  Bug,
+  Download,
+  FileText,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
@@ -44,6 +53,108 @@ const ROLE_LABELS: Record<string, string> = {
   guest: '嘉宾',
   system: '系统',
 };
+
+// 导出工具函数
+function exportToPDF(
+  discussion: { title: string; question: string; status: string; judgeModel: string; guestModels: string[]; finalVerdict?: string | null; confidenceScores?: Record<string, number> | null },
+  messages: { role: string; modelName?: string | null; content: string; createdAt: string | Date }[]
+) {
+  const escHtml = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br/>');
+
+  const roleColors: Record<string, string> = { host: '#3b82f6', judge: '#a855f7', guest: '#22c55e', system: '#6b7280' };
+
+  let messagesHtml = '';
+  for (const msg of messages) {
+    const roleLabel = ROLE_LABELS[msg.role] || msg.role;
+    const header = msg.modelName ? `${roleLabel} (${msg.modelName})` : roleLabel;
+    const time = new Date(msg.createdAt).toLocaleTimeString('zh-CN');
+    const color = roleColors[msg.role] || '#333';
+    messagesHtml += `
+      <div style="margin-bottom:16px;padding:12px;border-left:4px solid ${color};background:#f9f9f9;border-radius:4px;">
+        <div style="font-size:12px;color:#666;margin-bottom:6px;">[${time}] <strong style="color:${color}">${escHtml(header)}</strong></div>
+        <div style="font-size:13px;line-height:1.7;white-space:pre-wrap;">${escHtml(msg.content)}</div>
+      </div>`;
+  }
+
+  let verdictHtml = '';
+  if (discussion.finalVerdict) {
+    verdictHtml = `
+      <h2 style="margin-top:30px;padding-bottom:8px;border-bottom:2px solid #22c55e;">最终裁决</h2>
+      <div style="padding:12px;background:#f0fdf4;border-radius:6px;white-space:pre-wrap;line-height:1.7;">${escHtml(discussion.finalVerdict)}</div>`;
+    if (discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0) {
+      verdictHtml += '<h3 style="margin-top:16px;">置信度评分</h3><ul>';
+      for (const [hypo, score] of Object.entries(discussion.confidenceScores)) {
+        verdictHtml += `<li>${escHtml(hypo)}: <strong>${(score as number).toFixed(2)}</strong></li>`;
+      }
+      verdictHtml += '</ul>';
+    }
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(discussion.title)}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Hiragino Sans GB",sans-serif;max-width:800px;margin:0 auto;padding:40px 30px;color:#333;font-size:14px;line-height:1.6;}
+  h1{font-size:22px;margin-bottom:8px;} h2{font-size:17px;} h3{font-size:15px;}
+  .meta{font-size:12px;color:#888;margin-bottom:24px;}
+  .question{padding:16px;background:#eff6ff;border-radius:8px;margin-bottom:24px;}
+  @media print{body{padding:20px;}}
+</style></head><body>
+  <h1>${escHtml(discussion.title)}</h1>
+  <div class="meta">状态: ${discussion.status === 'completed' ? '已完成' : '进行中'} &nbsp;|&nbsp; 裁判: ${escHtml(discussion.judgeModel)} &nbsp;|&nbsp; 嘉宾: ${escHtml(discussion.guestModels.join(', '))}</div>
+  <h2>讨论问题</h2>
+  <div class="question">${escHtml(discussion.question)}</div>
+  <h2>讨论记录</h2>
+  ${messagesHtml}
+  ${verdictHtml}
+</body></html>`;
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.onload = () => { printWindow.print(); };
+}
+
+function exportToExcel(
+  discussion: { title: string; question: string; status: string; judgeModel: string; guestModels: string[]; finalVerdict?: string | null; confidenceScores?: Record<string, number> | null },
+  messages: { role: string; modelName?: string | null; content: string; createdAt: string | Date }[]
+) {
+  import('xlsx').then((XLSX) => {
+    // Sheet 1: Discussion info
+    const infoData = [
+      ['标题', discussion.title],
+      ['问题', discussion.question],
+      ['状态', discussion.status === 'completed' ? '已完成' : '进行中'],
+      ['裁判模型', discussion.judgeModel],
+      ['嘉宾模型', discussion.guestModels.join(', ')],
+    ];
+    if (discussion.finalVerdict) {
+      infoData.push(['最终裁决', discussion.finalVerdict]);
+    }
+    if (discussion.confidenceScores) {
+      for (const [hypo, score] of Object.entries(discussion.confidenceScores)) {
+        infoData.push([`置信度 - ${hypo}`, (score as number).toFixed(2)]);
+      }
+    }
+    const infoSheet = XLSX.utils.aoa_to_sheet(infoData);
+    infoSheet['!cols'] = [{ wch: 20 }, { wch: 80 }];
+
+    // Sheet 2: Messages
+    const msgHeader = ['时间', '角色', '模型', '内容'];
+    const msgRows = messages.map(m => [
+      new Date(m.createdAt).toLocaleString('zh-CN'),
+      ROLE_LABELS[m.role] || m.role,
+      m.modelName || '',
+      m.content,
+    ]);
+    const msgSheet = XLSX.utils.aoa_to_sheet([msgHeader, ...msgRows]);
+    msgSheet['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 20 }, { wch: 80 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, infoSheet, '讨论信息');
+    XLSX.utils.book_append_sheet(wb, msgSheet, '讨论记录');
+    XLSX.writeFile(wb, `${discussion.title}.xlsx`);
+  });
+}
 
 // 日志级别颜色
 const LOG_LEVEL_COLORS: Record<string, string> = {
@@ -332,6 +443,27 @@ export default function Discussion() {
                 )}
               </>
             )}
+
+            {/* 下载按钮 */}
+            {messages && messages.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <Download className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => exportToPDF(discussion, messages)}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    下载 PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportToExcel(discussion, messages)}>
+                    <FileSpreadsheet className="w-4 h-4 mr-2" />
+                    下载 Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </div>
       </header>
@@ -339,7 +471,7 @@ export default function Discussion() {
       {/* 三栏布局主体 */}
       <div className="flex-1 flex overflow-hidden">
         {/* 左侧：聊天区域 */}
-        <div className="flex-1 flex flex-col min-w-0 border-r">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden border-r">
           {/* 讨论问题 */}
           <div className="p-4 bg-muted/30 border-b shrink-0">
             <div className="flex items-start gap-3">
@@ -354,7 +486,7 @@ export default function Discussion() {
           </div>
 
           {/* 消息列表 */}
-          <ScrollArea className="flex-1 p-4">
+          <div className="flex-1 overflow-y-auto p-4">
             <div className="space-y-4 max-w-4xl mx-auto">
               {messagesLoading ? (
                 <div className="flex justify-center py-8">
@@ -418,7 +550,7 @@ export default function Discussion() {
               
               <div ref={messagesEndRef} />
             </div>
-          </ScrollArea>
+          </div>
 
           {/* 运行状态 */}
           {isRunning && (
@@ -435,7 +567,7 @@ export default function Discussion() {
         </div>
 
         {/* 中间：Debug 日志栏 */}
-        <div className="w-80 xl:w-96 border-r bg-zinc-900/50 hidden md:flex md:flex-col">
+        <div className="w-80 xl:w-96 shrink-0 border-r bg-zinc-900/50 hidden md:flex md:flex-col overflow-hidden">
           {/* 日志标题栏 */}
           <div className="px-3 py-2 border-b bg-zinc-900/80 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
@@ -560,7 +692,7 @@ export default function Discussion() {
         </div>
 
         {/* 右侧：配置面板 */}
-        <aside className="w-64 bg-card hidden lg:flex lg:flex-col">
+        <aside className="w-80 shrink-0 bg-card hidden lg:flex lg:flex-col overflow-hidden">
           {/* 配置标题 */}
           <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
             <Settings className="w-4 h-4 text-muted-foreground" />
@@ -617,7 +749,7 @@ export default function Discussion() {
                       <p className="text-sm font-medium">最终裁决</p>
                     </div>
                     <Card>
-                      <CardContent className="p-3 text-sm">
+                      <CardContent className="p-3 text-sm prose prose-sm dark:prose-invert max-w-none break-words">
                         <Streamdown>{discussion.finalVerdict}</Streamdown>
                       </CardContent>
                     </Card>

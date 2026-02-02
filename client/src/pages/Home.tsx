@@ -159,7 +159,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* 侧边栏 */}
-      <aside className="w-80 border-r bg-card flex flex-col">
+      <aside className="w-96 border-r bg-card flex flex-col">
         {/* 用户信息 */}
         <div className="p-4 border-b">
           <div className="flex items-center justify-between">
@@ -370,8 +370,8 @@ export default function Home() {
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-sm truncate">{discussion.title}</h4>
-                        <p className="text-xs text-muted-foreground truncate mt-1">
+                        <h4 className="font-medium text-sm line-clamp-2">{discussion.title}</h4>
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
                           {discussion.question}
                         </p>
                         <div className="flex items-center gap-2 mt-2">
