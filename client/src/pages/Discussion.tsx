@@ -42,6 +42,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
+import { useDiscussionStream } from "@/hooks/useDiscussionStream";
 
 // 角色颜色映射
 const ROLE_COLORS: Record<string, string> = {
@@ -118,6 +119,107 @@ function exportToPDF(
   printWindow.onload = () => { printWindow.print(); };
 }
 
+function exportToMarkdown(
+  discussion: { title: string; question: string; status: string; judgeModel: string; guestModels: string[]; finalVerdict?: string | null; confidenceScores?: Record<string, number> | null },
+  messages: { role: string; modelName?: string | null; content: string; createdAt: string | Date }[]
+) {
+  const lines: string[] = [];
+
+  lines.push(`# ${discussion.title}`);
+  lines.push('');
+  lines.push(`> 生成时间：${new Date().toLocaleString('zh-CN')}`);
+  lines.push('');
+
+  // 目录
+  lines.push('## 目录');
+  lines.push('');
+  lines.push('1. [讨论概要](#讨论概要)');
+  lines.push('2. [讨论记录](#讨论记录)');
+  if (discussion.finalVerdict) {
+    lines.push('3. [最终裁决](#最终裁决)');
+    lines.push('4. [置信度评分](#置信度评分)');
+  }
+  lines.push('');
+
+  // 概要
+  lines.push('## 讨论概要');
+  lines.push('');
+  lines.push(`| 项目 | 内容 |`);
+  lines.push(`| --- | --- |`);
+  lines.push(`| 状态 | ${discussion.status === 'completed' ? '已完成' : '进行中'} |`);
+  lines.push(`| 裁判模型 | ${discussion.judgeModel} |`);
+  lines.push(`| 嘉宾模型 | ${discussion.guestModels.join(', ')} |`);
+  lines.push(`| 总消息数 | ${messages.length} |`);
+  lines.push(`| 讨论轮次 | ${messages.filter(m => m.role === 'judge').length} |`);
+  lines.push('');
+  lines.push('### 讨论问题');
+  lines.push('');
+  lines.push(discussion.question);
+  lines.push('');
+
+  // 关键论点摘要
+  const guestMessages = messages.filter(m => m.role === 'guest');
+  const uniqueGuests = [...new Set(guestMessages.map(m => m.modelName).filter(Boolean))];
+  if (uniqueGuests.length > 0) {
+    lines.push('### 各嘉宾核心观点');
+    lines.push('');
+    for (const guest of uniqueGuests) {
+      const guestMsgs = guestMessages.filter(m => m.modelName === guest);
+      lines.push(`**${guest}**（${guestMsgs.length} 条发言）`);
+      // 取第一条发言的前200字作为核心观点摘要
+      if (guestMsgs.length > 0) {
+        const preview = guestMsgs[0].content.slice(0, 200).replace(/\n/g, ' ');
+        lines.push(`> ${preview}${guestMsgs[0].content.length > 200 ? '...' : ''}`);
+      }
+      lines.push('');
+    }
+  }
+
+  // 完整讨论记录
+  lines.push('## 讨论记录');
+  lines.push('');
+  for (const msg of messages) {
+    const roleLabel = ROLE_LABELS[msg.role] || msg.role;
+    const header = msg.modelName ? `${roleLabel} (${msg.modelName})` : roleLabel;
+    const time = new Date(msg.createdAt).toLocaleTimeString('zh-CN');
+    lines.push(`### [${time}] ${header}`);
+    lines.push('');
+    lines.push(msg.content);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  // 最终裁决
+  if (discussion.finalVerdict) {
+    lines.push('## 最终裁决');
+    lines.push('');
+    lines.push(discussion.finalVerdict);
+    lines.push('');
+  }
+
+  // 置信度评分
+  if (discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0) {
+    lines.push('## 置信度评分');
+    lines.push('');
+    lines.push('| 假设 | 置信度 |');
+    lines.push('| --- | --- |');
+    for (const [hypo, score] of Object.entries(discussion.confidenceScores)) {
+      lines.push(`| ${hypo} | **${(score as number).toFixed(2)}** |`);
+    }
+    lines.push('');
+  }
+
+  const content = lines.join('\n');
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${discussion.title}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function exportToExcel(
   discussion: { title: string; question: string; status: string; judgeModel: string; guestModels: string[]; finalVerdict?: string | null; confidenceScores?: Record<string, number> | null },
   messages: { role: string; modelName?: string | null; content: string; createdAt: string | Date }[]
@@ -187,6 +289,12 @@ export default function Discussion() {
   const [isRunning, setIsRunning] = useState(false);
   const [currentRound, setCurrentRound] = useState(1);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // SSE 流式消息
+  const { streamingMessages } = useDiscussionStream(discussionId, isRunning);
+
+  // 人类介入状态
+  const [interventionText, setInterventionText] = useState('');
 
   // 继续讨论状态
   const [continueText, setContinueText] = useState('');
@@ -275,6 +383,32 @@ export default function Discussion() {
       refetchLogs();
     },
   });
+
+  // 发送主持人消息（人类介入）
+  const sendHostMutation = trpc.message.sendHost.useMutation({
+    onSuccess: () => {
+      setInterventionText('');
+      refetchMessages();
+      refetchLogs();
+      toast.success('消息已插入，讨论将继续');
+      // 自动恢复讨论
+      setIsRunning(true);
+      setAutoScroll(true);
+    },
+    onError: (error) => {
+      toast.error(`发送失败: ${error.message}`);
+    },
+  });
+
+  const handleIntervention = () => {
+    if (!interventionText.trim()) return;
+    // 暂停讨论
+    setIsRunning(false);
+    sendHostMutation.mutate({
+      discussionId,
+      content: interventionText,
+    });
+  };
 
   // 继续讨论
   const continueMutation = trpc.orchestrator.continueDiscussion.useMutation({
@@ -545,6 +679,10 @@ export default function Discussion() {
                     <FileText className="w-4 h-4 mr-2" />
                     下载 PDF
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportToMarkdown(discussion, messages)}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    下载 Markdown 报告
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportToExcel(discussion, messages)}>
                     <FileSpreadsheet className="w-4 h-4 mr-2" />
                     下载 Excel
@@ -627,8 +765,37 @@ export default function Discussion() {
                 ))
               )}
               
+              {/* 流式消息 */}
+              {Array.from(streamingMessages.values()).map((sm) => (
+                <div key={`stream_${sm.role}_${sm.modelName}`} className="flex gap-3">
+                  <div className={`w-10 h-10 rounded-full ${sm.role === 'judge' ? 'bg-purple-500' : 'bg-green-500'} flex items-center justify-center shrink-0`}>
+                    {sm.role === 'judge' ? (
+                      <Gavel className="w-5 h-5 text-white" />
+                    ) : (
+                      <Bot className="w-5 h-5 text-white" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">
+                        {sm.role === 'judge' ? '裁判' : '嘉宾'} ({sm.modelName})
+                      </span>
+                      <span className="flex items-center gap-1 text-xs text-green-500">
+                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                        输出中
+                      </span>
+                    </div>
+                    <Card>
+                      <CardContent className="p-3 prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{sm.content || ' '}</Streamdown>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              ))}
+
               {/* 加载指示器 */}
-              {(startMutation.isPending || (isRunning && roundStatus?.isExecuting) || requestVerdictMutation.isPending) && (
+              {streamingMessages.size === 0 && (startMutation.isPending || (isRunning && roundStatus?.isExecuting) || requestVerdictMutation.isPending) && (
                 <div className="flex gap-3">
                   <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -650,15 +817,72 @@ export default function Discussion() {
             </div>
           </div>
 
-          {/* 运行状态 */}
+          {/* 运行状态 + 人类介入 */}
           {isRunning && (
-            <div className="p-4 border-t bg-muted/30 shrink-0">
+            <div className="p-4 border-t bg-muted/30 shrink-0 space-y-3">
               <div className="flex items-center gap-4">
                 <Loader2 className="w-5 h-5 animate-spin text-primary" />
                 <div className="flex-1">
                   <p className="text-sm font-medium">讨论进行中 - 第 {currentRound} 轮</p>
                   <Progress value={currentRound * 10} className="mt-2" />
                 </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="flex-1 h-8 px-3 text-sm rounded-md border bg-background"
+                  placeholder="插话：输入内容引导讨论方向..."
+                  value={interventionText}
+                  onChange={(e) => setInterventionText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleIntervention();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!interventionText.trim() || sendHostMutation.isPending}
+                  onClick={handleIntervention}
+                >
+                  {sendHostMutation.isPending ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Send className="w-3 h-3" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* 暂停时也显示介入输入框 */}
+          {!isRunning && discussion.status === 'active' && messages && messages.length > 0 && (
+            <div className="p-4 border-t bg-card shrink-0">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="flex-1 h-8 px-3 text-sm rounded-md border bg-background"
+                  placeholder="输入消息引导下一轮讨论..."
+                  value={interventionText}
+                  onChange={(e) => setInterventionText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleIntervention();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!interventionText.trim() || sendHostMutation.isPending}
+                  onClick={handleIntervention}
+                >
+                  <Send className="w-3 h-3 mr-1" />
+                  插入
+                </Button>
               </div>
             </div>
           )}
@@ -857,7 +1081,7 @@ export default function Discussion() {
         </div>
 
         {/* 右侧：配置面板 */}
-        <aside className="w-80 shrink-0 bg-card hidden lg:flex lg:flex-col overflow-hidden">
+        <aside className="w-96 shrink-0 bg-card hidden lg:flex lg:flex-col overflow-hidden">
           {/* 配置标题 */}
           <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
             <Settings className="w-4 h-4 text-muted-foreground" />
@@ -926,7 +1150,7 @@ export default function Discussion() {
                       <div className="space-y-2">
                         {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
                           <div key={hypothesis} className="flex items-center justify-between text-sm">
-                            <span className="truncate flex-1 mr-2 text-xs">{hypothesis}</span>
+                            <span className="break-words flex-1 mr-2 text-xs">{hypothesis}</span>
                             <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'} className="text-xs">
                               {(score as number).toFixed(2)}
                             </Badge>

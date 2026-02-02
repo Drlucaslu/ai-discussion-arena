@@ -2,9 +2,10 @@
  * 讨论编排服务 - 管理 AI 角色之间的交互流程
  */
 
-import { callAIModel, ModelConfig, ChatMessage, getModelDisplayName } from './aiModels';
+import { callAIModel, streamAIModel, ModelConfig, ChatMessage, getModelDisplayName } from './aiModels';
 import { createMessage, updateDiscussion, getMessagesByDiscussionId } from './db';
 import type { Discussion, Message } from '../drizzle/schema';
+import { streamManager } from './streamManager';
 
 // 角色系统提示词（讨论模式）
 const DISCUSSION_PROMPTS = {
@@ -295,23 +296,49 @@ export async function invokeJudge(
   addDiscussionLog(discussion.id, 'info', '裁判', `发送 API 请求...`, {
     messageCount: chatHistory.length,
   });
-  
+
+  const modelName = getModelDisplayName(judgeConfig.provider);
   const startTime = Date.now();
-  const result = await callAIModel(judgeConfig, {
-    messages: chatHistory,
-    temperature: 0.7,
-  });
+  let result;
+
+  // 如果有 SSE 客户端，使用流式调用
+  if (streamManager.hasClients(discussion.id)) {
+    streamManager.emit({
+      type: 'message_start',
+      discussionId: discussion.id,
+      data: { role: 'judge', modelName },
+    });
+    result = await streamAIModel(judgeConfig, {
+      messages: chatHistory,
+      temperature: 0.7,
+    }, (chunk) => {
+      streamManager.emit({
+        type: 'chunk',
+        discussionId: discussion.id,
+        data: { role: 'judge', modelName, chunk },
+      });
+    });
+    streamManager.emit({
+      type: 'message_end',
+      discussionId: discussion.id,
+      data: { role: 'judge', modelName, content: result.content },
+    });
+  } else {
+    result = await callAIModel(judgeConfig, {
+      messages: chatHistory,
+      temperature: 0.7,
+    });
+  }
+
   const responseTime = Date.now() - startTime;
-  
+
   addDiscussionLog(discussion.id, 'info', '裁判', `收到响应，耗时 ${responseTime}ms`, {
     responseTime,
     contentLength: result.content.length,
   });
-  
-  // 确定实际使用的模型名称
-  const modelName = getModelDisplayName(judgeConfig.provider);
+
   addDiscussionLog(discussion.id, 'info', '裁判', `成功使用模型: ${modelName}`);
-  
+
   // 保存消息
   const message = await createMessage({
     discussionId: discussion.id,
@@ -378,20 +405,47 @@ export async function invokeGuest(
   addDiscussionLog(discussion.id, 'info', '嘉宾', `发送 API 请求...`, {
     messageCount: chatHistory.length,
   });
-  
+
   const startTime = Date.now();
-  const result = await callAIModel(guestConfig, {
-    messages: chatHistory,
-    temperature: 0.8,
-  });
+  let result;
+
+  // 如果有 SSE 客户端，使用流式调用
+  if (streamManager.hasClients(discussion.id)) {
+    streamManager.emit({
+      type: 'message_start',
+      discussionId: discussion.id,
+      data: { role: 'guest', modelName: modelDisplayName },
+    });
+    result = await streamAIModel(guestConfig, {
+      messages: chatHistory,
+      temperature: 0.8,
+    }, (chunk) => {
+      streamManager.emit({
+        type: 'chunk',
+        discussionId: discussion.id,
+        data: { role: 'guest', modelName: modelDisplayName, chunk },
+      });
+    });
+    streamManager.emit({
+      type: 'message_end',
+      discussionId: discussion.id,
+      data: { role: 'guest', modelName: modelDisplayName, content: result.content },
+    });
+  } else {
+    result = await callAIModel(guestConfig, {
+      messages: chatHistory,
+      temperature: 0.8,
+    });
+  }
+
   const responseTime = Date.now() - startTime;
-  
+
   addDiscussionLog(discussion.id, 'info', '嘉宾', `收到响应，耗时 ${responseTime}ms`, {
     responseTime,
     contentLength: result.content.length,
   });
   addDiscussionLog(discussion.id, 'info', '嘉宾', `成功使用模型: ${modelDisplayName}`);
-  
+
   // 保存消息
   const message = await createMessage({
     discussionId: discussion.id,
@@ -485,13 +539,16 @@ export async function executeDiscussionRound(
       };
     }
 
-    // 2. 各嘉宾依次发言
-    for (const guestModel of discussion.guestModels) {
-      // 更新消息列表
-      const updatedMessages = await getMessagesByDiscussionId(discussion.id);
-      context.messages = updatedMessages;
+    // 2. 各嘉宾并行发言
+    addDiscussionLog(discussion.id, 'info', '系统', `${discussion.guestModels.length} 位嘉宾并行发言中...`);
+    const updatedMessages = await getMessagesByDiscussionId(discussion.id);
+    context.messages = updatedMessages;
 
-      const guestResult = await invokeGuest(context, guestModel);
+    const guestPromises = discussion.guestModels.map(guestModel =>
+      invokeGuest({ ...context, messages: [...updatedMessages] }, guestModel)
+    );
+    const guestResults = await Promise.all(guestPromises);
+    for (const guestResult of guestResults) {
       roundMessages.push(guestResult.message);
     }
 

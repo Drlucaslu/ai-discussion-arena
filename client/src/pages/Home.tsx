@@ -27,6 +27,7 @@ import {
   Paperclip,
   X,
   FileText,
+  BarChart3,
 } from "lucide-react";
 import { useState, useRef } from "react";
 import { useLocation } from "wouter";
@@ -39,6 +40,95 @@ const MODELS = [
   { provider: 'gemini', name: 'Google Gemini 2.5 Flash', model: 'gemini-2.5-flash' },
   { provider: 'claude', name: 'Anthropic Claude Sonnet 4.5', model: 'claude-sonnet-4-5' },
   { provider: 'deepseek', name: 'DeepSeek Chat', model: 'deepseek-chat' },
+];
+
+// 讨论模板
+interface DiscussionTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  title: string;
+  question: string;
+  mode: 'discussion' | 'document';
+  guestModels: string[];
+  judgeModel: string;
+  confidenceThreshold: number;
+}
+
+const TEMPLATES: DiscussionTemplate[] = [
+  {
+    id: 'tech-review',
+    name: '技术方案评审',
+    icon: '🔧',
+    description: '多个 AI 评审技术方案的可行性、风险和改进建议',
+    title: '技术方案评审',
+    question: '请评审以下技术方案，从可行性、性能、安全性、可维护性等维度分析其优缺点，并给出改进建议。\n\n[请在此描述您的技术方案]',
+    mode: 'discussion',
+    guestModels: ['openai', 'claude', 'gemini'],
+    judgeModel: 'claude',
+    confidenceThreshold: 0.8,
+  },
+  {
+    id: 'investment',
+    name: '投资决策分析',
+    icon: '📈',
+    description: '分析投资标的的风险收益比，辅助投资决策',
+    title: '投资决策分析',
+    question: '请从基本面、技术面、宏观环境等角度分析以下投资标的，评估其风险收益比，并给出投资建议。\n\n[请在此描述投资标的和背景]',
+    mode: 'discussion',
+    guestModels: ['openai', 'claude', 'deepseek'],
+    judgeModel: 'openai',
+    confidenceThreshold: 0.75,
+  },
+  {
+    id: 'product',
+    name: '产品需求讨论',
+    icon: '💡',
+    description: '讨论产品需求的优先级、可行性和实现方案',
+    title: '产品需求讨论',
+    question: '请讨论以下产品需求，从用户价值、技术可行性、商业价值、实现成本等维度进行分析，确定需求优先级。\n\n[请在此描述产品需求]',
+    mode: 'discussion',
+    guestModels: ['openai', 'gemini'],
+    judgeModel: 'claude',
+    confidenceThreshold: 0.8,
+  },
+  {
+    id: 'prd',
+    name: '协作撰写 PRD',
+    icon: '📄',
+    description: '多个 AI 协作撰写产品需求文档',
+    title: '产品需求文档（PRD）',
+    question: '请协作撰写一份完整的产品需求文档（PRD），包含：背景、目标用户、核心功能、用户故事、非功能需求、里程碑计划。\n\n[请在此描述产品概述]',
+    mode: 'document',
+    guestModels: ['openai', 'claude', 'gemini'],
+    judgeModel: 'claude',
+    confidenceThreshold: 0.85,
+  },
+  {
+    id: 'brainstorm',
+    name: '头脑风暴',
+    icon: '🧠',
+    description: '围绕一个话题进行多角度创意发散',
+    title: '头脑风暴',
+    question: '请围绕以下话题进行头脑风暴，每位嘉宾从不同角度提出创意和方案，裁判负责整理和评选最佳创意。\n\n[请在此描述话题]',
+    mode: 'discussion',
+    guestModels: ['openai', 'claude', 'gemini', 'deepseek'],
+    judgeModel: 'openai',
+    confidenceThreshold: 0.7,
+  },
+  {
+    id: 'debate',
+    name: '正反方辩论',
+    icon: '⚖️',
+    description: '围绕争议话题进行正反方辩论',
+    title: '正反方辩论',
+    question: '请围绕以下话题展开正反方辩论，各嘉宾分别持不同立场进行论证，裁判在充分辩论后做出裁决。\n\n[请在此描述辩论话题]',
+    mode: 'discussion',
+    guestModels: ['openai', 'claude'],
+    judgeModel: 'gemini',
+    confidenceThreshold: 0.8,
+  },
 ];
 
 export default function Home() {
@@ -233,6 +323,9 @@ export default function Home() {
               </div>
             </div>
             <div className="flex gap-1">
+              <Button variant="ghost" size="icon" onClick={() => navigate('/dashboard')} title="历史分析">
+                <BarChart3 className="w-4 h-4" />
+              </Button>
               <Button variant="ghost" size="icon" onClick={() => navigate('/settings')}>
                 <Settings className="w-4 h-4" />
               </Button>
@@ -261,6 +354,38 @@ export default function Home() {
               </DialogHeader>
               
               <div className="space-y-6 py-4">
+                {/* 模板选择 */}
+                <div className="space-y-3">
+                  <Label>快速模板（可选）</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {TEMPLATES.map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        className="text-left p-3 rounded-lg border hover:border-primary hover:bg-accent/50 transition-colors"
+                        onClick={() => {
+                          setNewDiscussion({
+                            title: tpl.title,
+                            question: tpl.question,
+                            guestModels: tpl.guestModels,
+                            judgeModel: tpl.judgeModel,
+                            confidenceThreshold: tpl.confidenceThreshold,
+                            enableDynamicAgent: false,
+                            dataReadLimit: 100,
+                            mode: tpl.mode,
+                          });
+                        }}
+                      >
+                        <span className="text-lg">{tpl.icon}</span>
+                        <p className="font-medium text-sm mt-1">{tpl.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tpl.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <Separator />
+
                 {/* 基本信息 */}
                 <div className="space-y-4">
                   <div className="space-y-2">

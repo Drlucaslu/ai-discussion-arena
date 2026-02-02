@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { streamManager } from "../streamManager";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -35,6 +36,23 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+  // SSE streaming endpoint
+  app.get("/api/stream/:discussionId", (req, res) => {
+    const discussionId = parseInt(req.params.discussionId);
+    if (isNaN(discussionId)) {
+      res.status(400).json({ error: "Invalid discussionId" });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write("data: {\"type\":\"connected\"}\n\n");
+    streamManager.addClient(discussionId, res);
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

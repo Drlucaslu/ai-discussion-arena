@@ -102,7 +102,7 @@ export const appRouter = router({
             } else if (att.fileType === 'md') {
               extractedText = parseMarkdown(buffer);
             } else {
-              extractedText = parseExcel(buffer);
+              extractedText = await parseExcel(buffer);
             }
             attachments.push({
               id: `${discussion.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -344,7 +344,7 @@ export const appRouter = router({
           } else if (IMAGE_EXTENSIONS.includes(att.fileType)) {
             extractedText = parseImage(att.fileName, buffer.length);
           } else {
-            extractedText = parseExcel(buffer);
+            extractedText = await parseExcel(buffer);
           }
           newAttachments.push({
             id: `${discussion.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -410,6 +410,95 @@ export const appRouter = router({
         const result = await requestFinalVerdict(context);
         return result;
       }),
+  }),
+
+  // 统计分析
+  stats: router({
+    overview: publicProcedure.query(() => {
+      const allDiscussions = getAllDiscussions();
+      const total = allDiscussions.length;
+      const completed = allDiscussions.filter(d => d.status === 'completed').length;
+      const active = allDiscussions.filter(d => d.status === 'active').length;
+
+      // 模型使用统计
+      const modelUsage: Record<string, number> = {};
+      for (const d of allDiscussions) {
+        for (const m of d.guestModels) {
+          modelUsage[m] = (modelUsage[m] || 0) + 1;
+        }
+        modelUsage[d.judgeModel] = (modelUsage[d.judgeModel] || 0) + 1;
+      }
+
+      // 置信度分布
+      const confidenceData: { discussion: string; scores: Record<string, number> }[] = [];
+      for (const d of allDiscussions) {
+        if (d.confidenceScores && Object.keys(d.confidenceScores).length > 0) {
+          confidenceData.push({
+            discussion: d.title,
+            scores: d.confidenceScores,
+          });
+        }
+      }
+
+      // 每月讨论数量
+      const monthlyData: Record<string, { total: number; completed: number }> = {};
+      for (const d of allDiscussions) {
+        const month = new Date(d.createdAt).toISOString().slice(0, 7);
+        if (!monthlyData[month]) monthlyData[month] = { total: 0, completed: 0 };
+        monthlyData[month].total++;
+        if (d.status === 'completed') monthlyData[month].completed++;
+      }
+
+      // 讨论模式统计
+      const modeStats = {
+        discussion: allDiscussions.filter(d => d.mode === 'discussion').length,
+        document: allDiscussions.filter(d => d.mode === 'document').length,
+      };
+
+      // 平均置信度（所有已完成讨论）
+      let totalConfidence = 0;
+      let confidenceCount = 0;
+      for (const d of allDiscussions) {
+        if (d.confidenceScores) {
+          const scores = Object.values(d.confidenceScores);
+          for (const s of scores) {
+            totalConfidence += s;
+            confidenceCount++;
+          }
+        }
+      }
+      const avgConfidence = confidenceCount > 0 ? totalConfidence / confidenceCount : 0;
+
+      // 每个讨论的消息数
+      const discussionDetails = allDiscussions.slice(0, 20).map(d => {
+        const msgs = getMessagesByDiscussionId(d.id);
+        const rounds = msgs.filter(m => m.role === 'judge').length;
+        return {
+          id: d.id,
+          title: d.title,
+          status: d.status,
+          mode: d.mode,
+          messageCount: msgs.length,
+          rounds,
+          guestCount: d.guestModels.length,
+          createdAt: d.createdAt,
+          hasVerdict: !!d.finalVerdict,
+        };
+      });
+
+      return {
+        total,
+        completed,
+        active,
+        completionRate: total > 0 ? completed / total : 0,
+        avgConfidence,
+        modelUsage,
+        confidenceData,
+        monthlyData,
+        modeStats,
+        discussionDetails,
+      };
+    }),
   }),
 
   // 模型配置管理

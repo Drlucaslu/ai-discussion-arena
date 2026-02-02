@@ -57,8 +57,8 @@ export async function parsePDF(buffer: Buffer): Promise<string> {
 /**
  * 解析 Excel 文件，提取文本（CSV 格式，每个 sheet）
  */
-export function parseExcel(buffer: Buffer): string {
-  const XLSX = require("xlsx");
+export async function parseExcel(buffer: Buffer): Promise<string> {
+  const XLSX = await import("xlsx");
   const workbook = XLSX.read(buffer, { type: "buffer" });
 
   const parts: string[] = [];

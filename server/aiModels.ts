@@ -35,6 +35,8 @@ export interface ChatCompletionResult {
   };
 }
 
+export type StreamCallback = (chunk: string) => void;
+
 // 模型提供商配置
 const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: string }> = {
   openai: {
@@ -217,6 +219,233 @@ async function callClaude(
       totalTokens: data.usage.input_tokens + data.usage.output_tokens,
     } : undefined,
   };
+}
+
+/**
+ * 流式调用 OpenAI 兼容 API
+ */
+async function streamOpenAICompatible(
+  config: ModelConfig,
+  options: ChatCompletionOptions,
+  onChunk: StreamCallback
+): Promise<ChatCompletionResult> {
+  const baseUrl = config.baseUrl || MODEL_CONFIGS[config.provider].baseUrl;
+  const model = config.model || options.model || MODEL_CONFIGS[config.provider].defaultModel;
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: options.messages,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? 4096,
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`API 调用失败: ${response.status} - ${error}`);
+  }
+
+  let fullContent = '';
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      const data = trimmed.slice(6);
+      if (data === '[DONE]') continue;
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) {
+          fullContent += delta;
+          onChunk(delta);
+        }
+      } catch {}
+    }
+  }
+
+  return { content: fullContent, model };
+}
+
+/**
+ * 流式调用 Gemini API
+ */
+async function streamGemini(
+  config: ModelConfig,
+  options: ChatCompletionOptions,
+  onChunk: StreamCallback
+): Promise<ChatCompletionResult> {
+  const model = config.model || options.model || MODEL_CONFIGS.gemini.defaultModel;
+  const baseUrl = config.baseUrl || MODEL_CONFIGS.gemini.baseUrl;
+
+  const contents = options.messages
+    .filter(m => m.role !== 'system')
+    .map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+  const systemMessage = options.messages.find(m => m.role === 'system');
+
+  const response = await fetch(
+    `${baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${config.apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
+        generationConfig: {
+          temperature: options.temperature ?? 0.7,
+          maxOutputTokens: options.maxTokens ?? 4096,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Gemini API 调用失败: ${response.status} - ${error}`);
+  }
+
+  let fullContent = '';
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      const data = trimmed.slice(6);
+      try {
+        const parsed = JSON.parse(data);
+        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          fullContent += text;
+          onChunk(text);
+        }
+      } catch {}
+    }
+  }
+
+  return { content: fullContent, model };
+}
+
+/**
+ * 流式调用 Claude API
+ */
+async function streamClaude(
+  config: ModelConfig,
+  options: ChatCompletionOptions,
+  onChunk: StreamCallback
+): Promise<ChatCompletionResult> {
+  const model = config.model || options.model || MODEL_CONFIGS.claude.defaultModel;
+  const baseUrl = config.baseUrl || MODEL_CONFIGS.claude.baseUrl;
+
+  const systemMessage = options.messages.find(m => m.role === 'system');
+  const otherMessages = options.messages.filter(m => m.role !== 'system');
+
+  const response = await fetch(`${baseUrl}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.apiKey!,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: options.maxTokens ?? 4096,
+      stream: true,
+      system: systemMessage?.content,
+      messages: otherMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+      })),
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Claude API 调用失败: ${response.status} - ${error}`);
+  }
+
+  let fullContent = '';
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      const data = trimmed.slice(6);
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+          fullContent += parsed.delta.text;
+          onChunk(parsed.delta.text);
+        }
+      } catch {}
+    }
+  }
+
+  return { content: fullContent, model };
+}
+
+/**
+ * 统一的流式 AI 模型调用接口
+ */
+export async function streamAIModel(
+  config: ModelConfig,
+  options: ChatCompletionOptions,
+  onChunk: StreamCallback
+): Promise<ChatCompletionResult> {
+  try {
+    switch (config.provider) {
+      case 'openai':
+      case 'deepseek':
+        return await streamOpenAICompatible(config, options, onChunk);
+      case 'gemini':
+        return await streamGemini(config, options, onChunk);
+      case 'claude':
+        return await streamClaude(config, options, onChunk);
+      default:
+        throw new Error(`不支持的模型提供商: ${config.provider}`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[AI Model Stream] ${config.provider} 调用失败:`, errorMessage);
+    throw new Error(
+      `${config.provider} API 流式调用失败: ${errorMessage}\n\n` +
+      `请检查您的 API Key 是否正确配置。`
+    );
+  }
 }
 
 /**
