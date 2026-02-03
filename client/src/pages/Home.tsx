@@ -551,9 +551,9 @@ export default function Home() {
 
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label>启用动态 Agent</Label>
+                      <Label>启用网络搜索</Label>
                       <p className="text-xs text-muted-foreground">
-                        允许 AI 生成代码查询数据库
+                        AI 可自主搜索网络获取最新信息
                       </p>
                     </div>
                     <Switch

@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { streamManager } from "../streamManager";
+import { generatePDFBuffer } from "../pdfExport";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -51,6 +52,25 @@ async function startServer() {
     });
     res.write("data: {\"type\":\"connected\"}\n\n");
     streamManager.addClient(discussionId, res);
+  });
+
+  // PDF 导出端点（使用 Puppeteer 直接生成 PDF）
+  app.get("/api/export/pdf/:discussionId", async (req, res) => {
+    const discussionId = parseInt(req.params.discussionId);
+    if (isNaN(discussionId)) {
+      res.status(400).json({ error: "Invalid discussionId" });
+      return;
+    }
+    try {
+      const { buffer, filename } = await generatePDFBuffer(discussionId);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      res.setHeader("Content-Length", buffer.length);
+      res.end(buffer);
+    } catch (error: any) {
+      console.error("[PDF Export] 失败:", error);
+      res.status(500).json({ error: error.message || "PDF 生成失败" });
+    }
   });
 
   // tRPC API

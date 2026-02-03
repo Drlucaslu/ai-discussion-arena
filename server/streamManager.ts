@@ -5,7 +5,7 @@
 import type { Response } from 'express';
 
 export interface StreamEvent {
-  type: 'chunk' | 'message_start' | 'message_end' | 'round_start' | 'round_end' | 'discussion_complete' | 'error';
+  type: 'chunk' | 'message_start' | 'message_end' | 'round_start' | 'round_end' | 'discussion_complete' | 'error' | 'search_start' | 'search_end';
   discussionId: number;
   data: Record<string, unknown>;
 }

@@ -7,8 +7,15 @@ export interface StreamingMessage {
   isStreaming: boolean;
 }
 
+export interface SearchStatus {
+  query: string;
+  isSearching: boolean;
+  resultCount?: number;
+}
+
 export function useDiscussionStream(discussionId: number, isRunning: boolean) {
   const [streamingMessages, setStreamingMessages] = useState<Map<string, StreamingMessage>>(new Map());
+  const [activeSearches, setActiveSearches] = useState<SearchStatus[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const connect = useCallback(() => {
@@ -50,6 +57,23 @@ export function useDiscussionStream(discussionId: number, isRunning: boolean) {
             next.delete(key);
             return next;
           });
+        } else if (data.type === 'search_start') {
+          setActiveSearches(prev => [
+            ...prev,
+            { query: data.data.query, isSearching: true },
+          ]);
+        } else if (data.type === 'search_end') {
+          setActiveSearches(prev =>
+            prev.map(s =>
+              s.query === data.data.query
+                ? { ...s, isSearching: false, resultCount: data.data.resultCount }
+                : s
+            )
+          );
+          // 清理已完成的搜索（延迟 3 秒）
+          setTimeout(() => {
+            setActiveSearches(prev => prev.filter(s => s.isSearching));
+          }, 3000);
         }
       } catch {}
     };
@@ -73,8 +97,9 @@ export function useDiscussionStream(discussionId: number, isRunning: boolean) {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
       setStreamingMessages(new Map());
+      setActiveSearches([]);
     };
   }, [isRunning, discussionId, connect]);
 
-  return { streamingMessages };
+  return { streamingMessages, activeSearches };
 }

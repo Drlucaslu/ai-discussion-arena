@@ -37,6 +37,7 @@ import {
   Paperclip,
   X,
   Image,
+  Globe,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
@@ -66,79 +67,27 @@ function renderMarkdown(md: string): string {
 }
 
 // 导出工具函数
-function exportToPDF(
-  discussion: { title: string; question: string; status: string; judgeModel: string; guestModels: string[]; finalVerdict?: string | null; confidenceScores?: Record<string, number> | null },
-  messages: { role: string; modelName?: string | null; content: string; createdAt: string | Date }[]
+async function exportToPDF(
+  discussion: { id: number; title: string },
 ) {
-  const escHtml = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-  const roleColors: Record<string, string> = { host: '#3b82f6', judge: '#a855f7', guest: '#22c55e', system: '#6b7280' };
-
-  let messagesHtml = '';
-  for (const msg of messages) {
-    const roleLabel = ROLE_LABELS[msg.role] || msg.role;
-    const header = msg.modelName ? `${roleLabel} (${msg.modelName})` : roleLabel;
-    const time = new Date(msg.createdAt).toLocaleTimeString('zh-CN');
-    const color = roleColors[msg.role] || '#333';
-    const contentHtml = msg.role === 'host' ? escHtml(msg.content).replace(/\n/g, '<br/>') : renderMarkdown(msg.content);
-    messagesHtml += `
-      <div class="msg" style="border-left-color:${color}">
-        <div class="msg-header">[${time}] <strong style="color:${color}">${escHtml(header)}</strong></div>
-        <div class="msg-body">${contentHtml}</div>
-      </div>`;
-  }
-
-  let verdictHtml = '';
-  if (discussion.finalVerdict) {
-    verdictHtml = `
-      <h2 style="margin-top:30px;padding-bottom:8px;border-bottom:2px solid #22c55e;">最终裁决</h2>
-      <div class="verdict">${renderMarkdown(discussion.finalVerdict)}</div>`;
-    if (discussion.confidenceScores && Object.keys(discussion.confidenceScores).length > 0) {
-      verdictHtml += '<h3 style="margin-top:16px;">置信度评分</h3><ul>';
-      for (const [hypo, score] of Object.entries(discussion.confidenceScores)) {
-        verdictHtml += `<li>${escHtml(hypo)}: <strong>${(score as number).toFixed(2)}</strong></li>`;
-      }
-      verdictHtml += '</ul>';
+  try {
+    const response = await fetch(`/api/export/pdf/${discussion.id}`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'PDF 生成失败' }));
+      throw new Error(err.error || `HTTP ${response.status}`);
     }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${discussion.title.replace(/[/\\:*?"<>|]/g, '_').slice(0, 80)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error: any) {
+    alert(`PDF 导出失败: ${error.message}`);
   }
-
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(discussion.title)}</title>
-<style>
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Hiragino Sans GB",sans-serif;max-width:800px;margin:0 auto;padding:40px 30px;color:#333;font-size:14px;line-height:1.6;}
-  h1{font-size:22px;margin-bottom:8px;} h2{font-size:17px;} h3{font-size:15px;}
-  .meta{font-size:12px;color:#888;margin-bottom:24px;}
-  .question{padding:16px;background:#eff6ff;border-radius:8px;margin-bottom:24px;}
-  .msg{margin-bottom:16px;padding:12px;border-left:4px solid #ccc;background:#f9f9f9;border-radius:4px;}
-  .msg-header{font-size:12px;color:#666;margin-bottom:6px;}
-  .msg-body{font-size:13px;line-height:1.7;}
-  .msg-body img{max-width:100%;height:auto;border-radius:4px;margin:8px 0;}
-  .msg-body pre{background:#f0f0f0;padding:12px;border-radius:4px;overflow-x:auto;font-size:12px;}
-  .msg-body code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px;}
-  .msg-body pre code{background:none;padding:0;}
-  .msg-body table{border-collapse:collapse;width:100%;margin:8px 0;}
-  .msg-body th,.msg-body td{border:1px solid #ddd;padding:6px 10px;text-align:left;font-size:12px;}
-  .msg-body th{background:#f5f5f5;font-weight:600;}
-  .msg-body blockquote{border-left:3px solid #ddd;margin:8px 0;padding:4px 12px;color:#666;}
-  .msg-body ul,.msg-body ol{padding-left:24px;}
-  .msg-body li{margin:2px 0;}
-  .verdict{padding:12px;background:#f0fdf4;border-radius:6px;line-height:1.7;}
-  .verdict img{max-width:100%;height:auto;border-radius:4px;margin:8px 0;}
-  @media print{body{padding:20px;} .msg{break-inside:avoid;}}
-</style></head><body>
-  <h1>${escHtml(discussion.title)}</h1>
-  <div class="meta">状态: ${discussion.status === 'completed' ? '已完成' : '进行中'} &nbsp;|&nbsp; 裁判: ${escHtml(discussion.judgeModel)} &nbsp;|&nbsp; 嘉宾: ${escHtml(discussion.guestModels.join(', '))}</div>
-  <h2>讨论问题</h2>
-  <div class="question">${escHtml(discussion.question).replace(/\n/g, '<br/>')}</div>
-  <h2>讨论记录</h2>
-  ${messagesHtml}
-  ${verdictHtml}
-</body></html>`;
-
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) return;
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.onload = () => { printWindow.print(); };
 }
 
 function exportToMarkdown(
@@ -313,7 +262,7 @@ export default function Discussion() {
   const [autoScroll, setAutoScroll] = useState(true);
 
   // SSE 流式消息
-  const { streamingMessages } = useDiscussionStream(discussionId, isRunning);
+  const { streamingMessages, activeSearches } = useDiscussionStream(discussionId, isRunning);
 
   // 人类介入状态
   const [interventionText, setInterventionText] = useState('');
@@ -697,7 +646,7 @@ export default function Discussion() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => exportToPDF(discussion, messages)}>
+                  <DropdownMenuItem onClick={() => exportToPDF(discussion)}>
                     <FileText className="w-4 h-4 mr-2" />
                     下载 PDF
                   </DropdownMenuItem>
@@ -778,7 +727,7 @@ export default function Discussion() {
                         </span>
                       </div>
                       <Card>
-                        <CardContent className="p-3 prose prose-sm dark:prose-invert max-w-none">
+                        <CardContent className="p-3 prose prose-sm dark:prose-invert max-w-none [&_table]:block [&_table]:overflow-x-auto [&_pre]:overflow-x-auto [&_pre]:max-w-full">
                           <Streamdown>{message.content}</Streamdown>
                         </CardContent>
                       </Card>
@@ -808,13 +757,49 @@ export default function Discussion() {
                       </span>
                     </div>
                     <Card>
-                      <CardContent className="p-3 prose prose-sm dark:prose-invert max-w-none">
+                      <CardContent className="p-3 prose prose-sm dark:prose-invert max-w-none [&_table]:block [&_table]:overflow-x-auto [&_pre]:overflow-x-auto [&_pre]:max-w-full">
                         <Streamdown>{sm.content || ' '}</Streamdown>
                       </CardContent>
                     </Card>
                   </div>
                 </div>
               ))}
+
+              {/* 网络搜索活动指示器 */}
+              {activeSearches.length > 0 && (
+                <div className="flex gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
+                    <Globe className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <Card>
+                      <CardContent className="p-3">
+                        <div className="space-y-1">
+                          {activeSearches.map((s, i) => (
+                            <div key={i} className="flex items-center gap-2 text-sm">
+                              {s.isSearching ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                                  <span className="text-blue-600 dark:text-blue-400">
+                                    正在搜索: {s.query}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                  <span className="text-muted-foreground">
+                                    搜索完成: {s.query} ({s.resultCount} 个结果)
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              )}
 
               {/* 加载指示器 */}
               {streamingMessages.size === 0 && (startMutation.isPending || (isRunning && roundStatus?.isExecuting) || requestVerdictMutation.isPending) && (
@@ -1137,7 +1122,7 @@ export default function Discussion() {
               </div>
 
               <div>
-                <p className="text-sm text-muted-foreground mb-2">动态 Agent</p>
+                <p className="text-sm text-muted-foreground mb-2">网络搜索 (AI 自主)</p>
                 <Badge variant={discussion.enableDynamicAgent ? 'default' : 'secondary'} className="text-xs">
                   {discussion.enableDynamicAgent ? '已启用' : '已禁用'}
                 </Badge>
@@ -1160,8 +1145,12 @@ export default function Discussion() {
                       <p className="text-sm font-medium">最终裁决</p>
                     </div>
                     <Card>
-                      <CardContent className="p-3 text-sm prose prose-sm dark:prose-invert max-w-none break-words" style={{ overflowWrap: 'anywhere' }}>
-                        <Streamdown>{discussion.finalVerdict}</Streamdown>
+                      <CardContent className="p-3 text-sm overflow-hidden">
+                        <div
+                          className="prose prose-sm dark:prose-invert max-w-none [&_table]:block [&_table]:overflow-x-auto [&_table]:w-full [&_pre]:overflow-x-auto [&_pre]:max-w-full"
+                          style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                          dangerouslySetInnerHTML={{ __html: renderMarkdown(discussion.finalVerdict) }}
+                        />
                       </CardContent>
                     </Card>
                   </div>
@@ -1172,8 +1161,8 @@ export default function Discussion() {
                       <div className="space-y-2">
                         {Object.entries(discussion.confidenceScores).map(([hypothesis, score]) => (
                           <div key={hypothesis} className="flex items-start justify-between text-sm gap-2">
-                            <span className="flex-1 text-xs" style={{ overflowWrap: 'anywhere' }}>{hypothesis}</span>
-                            <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'} className="text-xs">
+                            <span className="flex-1 text-xs" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{hypothesis}</span>
+                            <Badge variant={score >= discussion.confidenceThreshold ? 'default' : 'secondary'} className="text-xs shrink-0">
                               {(score as number).toFixed(2)}
                             </Badge>
                           </div>

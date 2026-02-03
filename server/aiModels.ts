@@ -37,6 +37,52 @@ export interface ChatCompletionResult {
 
 export type StreamCallback = (chunk: string) => void;
 
+// 请求超时时间（毫秒）
+const FETCH_TIMEOUT = 120_000; // 2 分钟
+const STREAM_TIMEOUT = 300_000; // 5 分钟（流式请求更长）
+
+/**
+ * 带超时的 fetch
+ */
+function fetchWithTimeout(url: string, options: RequestInit, timeout: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+/**
+ * 带重试的函数调用
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 2,
+  label: string = 'API'
+): Promise<T> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isFetchError = lastError.message.includes('fetch failed') ||
+        lastError.message.includes('ETIMEDOUT') ||
+        lastError.message.includes('ECONNRESET') ||
+        lastError.message.includes('aborted') ||
+        lastError.message.includes('terminated') ||
+        lastError.message.includes('network');
+
+      if (!isFetchError || attempt >= maxRetries) {
+        throw lastError;
+      }
+
+      const delay = (attempt + 1) * 2000; // 2s, 4s
+      console.warn(`[${label}] 请求失败 (${lastError.message})，${delay / 1000}s 后重试 (${attempt + 1}/${maxRetries})...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
 // 模型提供商配置
 const MODEL_CONFIGS: Record<ModelProvider, { defaultModel: string; baseUrl: string }> = {
   openai: {
@@ -82,7 +128,7 @@ async function callOpenAICompatible(
   // 优先使用 config.model，其次是 options.model，最后是默认模型
   const model = config.model || options.model || MODEL_CONFIGS[config.provider].defaultModel;
   
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -92,10 +138,10 @@ async function callOpenAICompatible(
       model,
       messages: options.messages,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens ?? 8192,
       stream: false,
     }),
-  });
+  }, FETCH_TIMEOUT);
 
   if (!response.ok) {
     const error = await response.text();
@@ -136,7 +182,7 @@ async function callGemini(
   // 系统消息作为 systemInstruction
   const systemMessage = options.messages.find(m => m.role === 'system');
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${baseUrl}/models/${model}:generateContent?key=${config.apiKey}`,
     {
       method: 'POST',
@@ -148,10 +194,11 @@ async function callGemini(
         systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
         generationConfig: {
           temperature: options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens ?? 4096,
+          maxOutputTokens: options.maxTokens ?? 8192,
         },
       }),
-    }
+    },
+    FETCH_TIMEOUT
   );
 
   if (!response.ok) {
@@ -186,7 +233,7 @@ async function callClaude(
   const systemMessage = options.messages.find(m => m.role === 'system');
   const otherMessages = options.messages.filter(m => m.role !== 'system');
 
-  const response = await fetch(`${baseUrl}/messages`, {
+  const response = await fetchWithTimeout(`${baseUrl}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -195,14 +242,14 @@ async function callClaude(
     },
     body: JSON.stringify({
       model,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens ?? 8192,
       system: systemMessage?.content,
       messages: otherMessages.map(m => ({
         role: m.role,
         content: m.content,
       })),
     }),
-  });
+  }, FETCH_TIMEOUT);
 
   if (!response.ok) {
     const error = await response.text();
@@ -232,7 +279,7 @@ async function streamOpenAICompatible(
   const baseUrl = config.baseUrl || MODEL_CONFIGS[config.provider].baseUrl;
   const model = config.model || options.model || MODEL_CONFIGS[config.provider].defaultModel;
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -242,10 +289,10 @@ async function streamOpenAICompatible(
       model,
       messages: options.messages,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens ?? 8192,
       stream: true,
     }),
-  });
+  }, STREAM_TIMEOUT);
 
   if (!response.ok) {
     const error = await response.text();
@@ -302,7 +349,7 @@ async function streamGemini(
 
   const systemMessage = options.messages.find(m => m.role === 'system');
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${config.apiKey}`,
     {
       method: 'POST',
@@ -312,10 +359,11 @@ async function streamGemini(
         systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
         generationConfig: {
           temperature: options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens ?? 4096,
+          maxOutputTokens: options.maxTokens ?? 8192,
         },
       }),
-    }
+    },
+    STREAM_TIMEOUT
   );
 
   if (!response.ok) {
@@ -366,7 +414,7 @@ async function streamClaude(
   const systemMessage = options.messages.find(m => m.role === 'system');
   const otherMessages = options.messages.filter(m => m.role !== 'system');
 
-  const response = await fetch(`${baseUrl}/messages`, {
+  const response = await fetchWithTimeout(`${baseUrl}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -375,7 +423,7 @@ async function streamClaude(
     },
     body: JSON.stringify({
       model,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens ?? 8192,
       stream: true,
       system: systemMessage?.content,
       messages: otherMessages.map(m => ({
@@ -383,7 +431,7 @@ async function streamClaude(
         content: m.content,
       })),
     }),
-  });
+  }, STREAM_TIMEOUT);
 
   if (!response.ok) {
     const error = await response.text();
@@ -395,24 +443,37 @@ async function streamClaude(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data: ')) continue;
-      const data = trimmed.slice(6);
-      try {
-        const parsed = JSON.parse(data);
-        if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-          fullContent += parsed.delta.text;
-          onChunk(parsed.delta.text);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+            fullContent += parsed.delta.text;
+            onChunk(parsed.delta.text);
+          } else if (parsed.type === 'error') {
+            throw new Error(`Claude stream error: ${parsed.error?.message || JSON.stringify(parsed)}`);
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith('Claude stream error')) throw e;
         }
-      } catch {}
+      }
     }
+  } catch (e) {
+    // If we already have content, return what we have instead of failing completely
+    if (fullContent.length > 100) {
+      console.warn(`[Claude Stream] Stream interrupted but returning partial content (${fullContent.length} chars): ${e}`);
+      return { content: fullContent, model };
+    }
+    throw e;
   }
 
   return { content: fullContent, model };
@@ -427,17 +488,19 @@ export async function streamAIModel(
   onChunk: StreamCallback
 ): Promise<ChatCompletionResult> {
   try {
-    switch (config.provider) {
-      case 'openai':
-      case 'deepseek':
-        return await streamOpenAICompatible(config, options, onChunk);
-      case 'gemini':
-        return await streamGemini(config, options, onChunk);
-      case 'claude':
-        return await streamClaude(config, options, onChunk);
-      default:
-        throw new Error(`不支持的模型提供商: ${config.provider}`);
-    }
+    return await withRetry(async () => {
+      switch (config.provider) {
+        case 'openai':
+        case 'deepseek':
+          return await streamOpenAICompatible(config, options, onChunk);
+        case 'gemini':
+          return await streamGemini(config, options, onChunk);
+        case 'claude':
+          return await streamClaude(config, options, onChunk);
+        default:
+          throw new Error(`不支持的模型提供商: ${config.provider}`);
+      }
+    }, 2, `${config.provider} Stream`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[AI Model Stream] ${config.provider} 调用失败:`, errorMessage);
@@ -456,17 +519,19 @@ export async function callAIModel(
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResult> {
   try {
-    switch (config.provider) {
-      case 'openai':
-      case 'deepseek':
-        return await callOpenAICompatible(config, options);
-      case 'gemini':
-        return await callGemini(config, options);
-      case 'claude':
-        return await callClaude(config, options);
-      default:
-        throw new Error(`不支持的模型提供商: ${config.provider}`);
-    }
+    return await withRetry(async () => {
+      switch (config.provider) {
+        case 'openai':
+        case 'deepseek':
+          return await callOpenAICompatible(config, options);
+        case 'gemini':
+          return await callGemini(config, options);
+        case 'claude':
+          return await callClaude(config, options);
+        default:
+          throw new Error(`不支持的模型提供商: ${config.provider}`);
+      }
+    }, 2, `${config.provider}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[AI Model] ${config.provider} 调用失败:`, errorMessage);
